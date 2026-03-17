@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CityTaste — Ottawa</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="topbar__left">
+      <div class="logo">City<span>Taste</span></div>
+      <div class="subtitle">Recommandations restaurants & hébergements — Ottawa</div>
+    </div>
+
+    <nav class="topbar__right">
+      <button class="btn btn--ghost" id="btnNavHome" type="button">Accueil</button>
+      <button class="btn btn--ghost" id="btnNavFilters" type="button">Filtres</button>
+    </nav>
+  </header>
+
+  <!-- HOME VIEW -->
+  <main class="home" id="homeView">
+    <section class="homeHero">
+      <div class="homeOverlay"></div>
+
+      <div class="homeContent">
+        <h1>Trouve ton prochain endroit à Ottawa</h1>
+        <p>Recherche par nom, quartier ou adresse. Ensuite, affine avec les filtres si besoin.</p>
+
+        <div class="homeSearch">
+          <input id="quickSearch" placeholder="Ex: Vanier, ByWard, Hilton, sushi, pizza..." />
+          <button class="btn btn--primary" id="btnExplore" type="button">Explorer</button>
+          <button class="btn btn--ghost" id="btnAdvanced" type="button">Filtres avancés</button>
+        </div>
+
+        <div class="homeChips">
+          <button class="chipBtn" data-q="Downtown">Downtown</button>
+          <button class="chipBtn" data-q="ByWard">ByWard</button>
+          <button class="chipBtn" data-q="Vanier">Vanier</button>
+          <button class="chipBtn" data-q="Kanata">Kanata</button>
+          <button class="chipBtn" data-q="Orléans">Orléans</button>
+        </div>
+
+        <div class="homeStats">
+          <div class="stat">
+            <div class="stat__label">Statut</div>
+            <div class="stat__value" id="dataStatus">Chargement…</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">Lieux disponibles</div>
+            <div class="stat__value" id="dataCount">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat__label">Source</div>
+            <div class="stat__value">OpenStreetMap</div>
+          </div>
+        </div>
+
+        <div class="homeNote" id="dataNote"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- FILTERS VIEW -->
+  <main class="container hidden" id="builderView">
+    <aside class="filters card" aria-label="Filtres">
+      <h2>Préférences</h2>
+
+      <div class="field">
+        <label for="type">Type de lieu</label>
+        <select id="type">
+          <option value="any">Restaurant + Hébergement</option>
+          <option value="restaurant">Restaurants seulement</option>
+          <option value="hotel">Hébergements seulement</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="cuisine">Cuisine / Catégorie</label>
+        <select id="cuisine">
+          <option value="any">Peu importe</option>
+          <option value="italian">Italien</option>
+          <option value="indian">Indien</option>
+          <option value="asian">Asiatique</option>
+          <option value="african">Africain</option>
+          <option value="canadian">Canadien</option>
+          <option value="cafe">Café / Brunch</option>
+        </select>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="budget">Budget</label>
+          <select id="budget">
+            <option value="any">Peu importe</option>
+            <option value="low">$ (économique)</option>
+            <option value="mid">$$ (moyen)</option>
+            <option value="high">$$$ (élevé)</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="maxKm">Distance max (km)</label>
+          <input id="maxKm" type="number" min="1" max="50" value="8" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Contraintes alimentaires</label>
+        <div class="chips">
+          <label class="chip"><input type="checkbox" id="veg" /> Végétarien</label>
+          <label class="chip"><input type="checkbox" id="halal" /> Halal</label>
+          <label class="chip"><input type="checkbox" id="glutenfree" /> Sans gluten</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="area">Zone (optionnel)</label>
+        <input id="area" placeholder="Ex: St Laurent, Centretown, Vanier..." />
+        <div class="hint">La zone est utilisée comme mot-clé (quartier/adresse).</div>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="topN">Top-N</label>
+          <input id="topN" type="number" min="3" max="20" value="12" />
+        </div>
+
+        <div class="field">
+          <label for="sortBy">Trier par</label>
+          <select id="sortBy">
+            <option value="score">Pertinence</option>
+            <option value="rating">Note (CityTaste)</option>
+            <option value="distance">Distance</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn--primary" id="btnReco" type="button">Recommander</button>
+        <button class="btn btn--ghost" id="btnReset" type="button">Réinitialiser</button>
+      </div>
+    </aside>
+
+    <section class="side card" aria-label="Aperçu">
+      <div class="side__banner"></div>
+      <div class="side__content">
+        <h2>CityTaste</h2>
+        <p class="muted">
+          Clique sur un lieu dans les résultats pour afficher la fiche détaillée.
+          Les photos s’affichent quand elles sont disponibles, sinon un visuel neutre est utilisé.
+        </p>
+
+        <div class="side__kpis">
+          <div class="mini">
+            <div class="mini__label">Lieux</div>
+            <div class="mini__value" id="kpiPlaces">—</div>
+          </div>
+          <div class="mini">
+            <div class="mini__label">Restaurants</div>
+            <div class="mini__value" id="kpiRestaurants">—</div>
+          </div>
+          <div class="mini">
+            <div class="mini__label">Hébergements</div>
+            <div class="mini__value" id="kpiHotels">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- RESULTS VIEW -->
+  <main class="container container--results hidden" id="resultsView">
+    <section class="resultsHeader card">
+      <div class="resultsHeader__top">
+        <div>
+          <h2>Résultats</h2>
+          <div class="muted" id="resultsSubtitle">—</div>
+        </div>
+
+        <div class="resultsHeader__actions">
+          <button class="btn btn--ghost" id="btnBackToFilters" type="button">Filtres</button>
+          <button class="btn btn--ghost" id="btnBackToHome" type="button">Accueil</button>
+        </div>
+      </div>
+
+      <div class="resultsMeta">
+        <span class="pill" id="countBadge">0 résultats</span>
+        <span class="pill pill--soft" id="activeFilters">—</span>
+      </div>
+
+      <div class="resultsSearchRow">
+        <input id="resultsSearch" placeholder="Rechercher dans ces résultats (nom, quartier, adresse)..." />
+        <button class="btn btn--ghost" id="btnClearResultsSearch" type="button">Effacer</button>
+      </div>
+    </section>
+
+    <section class="resultsList" id="results"></section>
+  </main>
+
+  <!-- DETAILS MODAL -->
+  <div class="modal hidden" id="detailsModal" aria-hidden="true">
+    <div class="modal__overlay" id="modalOverlay"></div>
+
+    <div class="modal__content" role="dialog" aria-modal="true" aria-label="Détails du lieu">
+      <div class="modal__top">
+        <div>
+          <div class="modal__title" id="mTitle">—</div>
+          <div class="modal__sub" id="mSub">—</div>
+        </div>
+        <button class="btn btn--ghost" id="btnCloseModal" type="button">✕</button>
+      </div>
+
+      <img id="mPhoto" class="modal__photo" alt="" />
+
+      <div class="modal__grid">
+        <div class="modal__left">
+          <div class="kpis">
+            <div class="kpi">
+              <div class="kpi__label">Note (CityTaste)</div>
+              <div class="kpi__value" id="mRating">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi__label">Budget</div>
+              <div class="kpi__value" id="mBudget">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi__label">Distance</div>
+              <div class="kpi__value" id="mDistance">—</div>
+            </div>
+            <div class="kpi">
+              <div class="kpi__label">Score</div>
+              <div class="kpi__value" id="mScore">—</div>
+            </div>
+          </div>
+
+          <div class="sectionTitle">Tags</div>
+          <div class="tags" id="mTags"></div>
+
+          <div class="sectionTitle">Pourquoi cette recommandation ?</div>
+          <div class="why" id="mWhy">—</div>
+        </div>
+
+        <div class="modal__right">
+          <div class="sectionTitle">Informations</div>
+          <div class="infoList">
+            <div class="infoRow"><span>Adresse</span><span id="mAddress">—</span></div>
+            <div class="infoRow"><span>Quartier</span><span id="mArea">—</span></div>
+            <div class="infoRow"><span>Horaires</span><span id="mHours">—</span></div>
+            <div class="infoRow"><span>Téléphone</span><span id="mPhone">—</span></div>
+            <div class="infoRow"><span>Website</span><span id="mWebsite">—</span></div>
+          </div>
+
+          <div class="modal__cta">
+            <a class="btn btn--primary" id="mMaps" href="#" target="_blank" rel="noreferrer">
+              Ouvrir sur Google Maps
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

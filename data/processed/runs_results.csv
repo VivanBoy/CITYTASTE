@@ -1,0 +1,5 @@
+run,include_text,use_svd,metric,n_neighbors,max_features,n_components,X_train_shape,HitRate_10,MRR_10,fit_time_sec
+C_text_tfidf_svd_cosine,True,True,cosine,15,5000,200,"(883, 546)",0.8914027149321267,0.8500053867700926,3.3
+A_baseline_catnum_cosine,False,False,cosine,15,5000,0,"(883, 346)",0.8868778280542986,0.8461215255332902,0.19
+B_text_tfidf_cosine,True,False,cosine,15,5000,0,"(883, 3717)",0.8959276018099548,0.8446455505279036,1.01
+D_text_tfidf_svd_euclidean,True,True,euclidean,15,5000,200,"(883, 546)",0.9004524886877828,0.8397489765136825,2.9

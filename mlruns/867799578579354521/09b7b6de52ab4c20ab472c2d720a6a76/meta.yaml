@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/Innocent/OneDrive/Bureau/@ProgrammeAI_cours_session_04/Projet
+  Capstone en IA/CityTaste/mlruns/867799578579354521/09b7b6de52ab4c20ab472c2d720a6a76/artifacts
+end_time: 1773178203674
+entry_point_name: ''
+experiment_id: '867799578579354521'
+lifecycle_stage: active
+run_id: 09b7b6de52ab4c20ab472c2d720a6a76
+run_name: A_baseline_catnum_cosine
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1773178202742
+status: 3
+tags: []
+user_id: Innocent
