@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+env/
+.venv/
+ENV/
+
+# JetBrains
+.idea/
+
+# VS Code
+.vscode/
+
+# Jupyter
+.ipynb_checkpoints/
+*.nbconvert.ipynb
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# MLflow
+mlruns/
+
+# Data / caches
+data/raw/
+data/processed/
+*.sqlite
+*.db
+
+# Model artifacts
+*.joblib
+*.pkl
+
+# Log files
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Ignore local secrets/config files
+*.env
+.env.*
+
+# Ignore notebook output and checkpoints (optionnel)
+**/*.ipynb_checkpoints
+
+# Exported release archives
+*.zip
+*.tar.gz
+*.egg
