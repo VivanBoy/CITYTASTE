@@ -1,0 +1,5 @@
+outs:
+- md5: 807e13d8dd368a2651cbecd4cd76e33d
+  size: 548518
+  hash: md5
+  path: ottawa_places_from_osm.csv
