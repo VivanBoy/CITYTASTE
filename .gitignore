@@ -29,8 +29,6 @@ Thumbs.db
 mlruns/
 
 # Data / caches
-data/raw/
-data/processed/
 *.sqlite
 *.db
 
