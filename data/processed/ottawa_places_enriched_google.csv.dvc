@@ -1,0 +1,5 @@
+outs:
+- md5: 9ba755e2baf867f002be3facc5bc5e04
+  size: 1140524
+  hash: md5
+  path: ottawa_places_enriched_google.csv
