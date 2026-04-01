@@ -1,0 +1,18 @@
+[
+  {
+    "question": "Comment chercher un lieu ?",
+    "answer": "Utilisez les filtres disponibles sur la page de recherche, puis lancez la recommandation pour afficher les résultats."
+  },
+  {
+    "question": "Que signifie la distance ?",
+    "answer": "La distance correspond à une référence de localisation utilisée par l'application. Si la position réelle de l'utilisateur n'est pas activée, la distance n'est pas forcément calculée depuis sa position."
+  },
+  {
+    "question": "Comment voir les détails d'un lieu ?",
+    "answer": "Cliquez sur le résultat ou sur la carte du lieu pour ouvrir sa fiche détaillée."
+  },
+  {
+    "question": "Pourquoi certains lieux n'ont pas d'image ?",
+    "answer": "Certaines données sources ne fournissent pas d'image. Dans ce cas, un visuel de remplacement peut être affiché."
+  }
+]

@@ -419,7 +419,7 @@ input:focus, select:focus{
   box-shadow: 0 30px 90px rgba(0,0,0,.25);
   overflow:hidden;
 
-  /* ✅ IMPORTANT: le modal reste dans l’écran */
+  /*  IMPORTANT: le modal reste dans l’écran */
   max-height: calc(100vh - 40px);
   display:flex;
   flex-direction:column;
@@ -446,7 +446,7 @@ input:focus, select:focus{
   flex: 0 0 auto;
 }
 
-/* ✅ La partie infos (grid) prend l’espace restant et scrolle */
+/*  La partie infos (grid) prend l’espace restant et scrolle */
 .modal__grid{
   display:grid;
   grid-template-columns: 1.2fr .8fr;
@@ -469,7 +469,7 @@ input:focus, select:focus{
   overflow:auto;
   min-height: 0;
 
-  /* ✅ permet le sticky du bouton */
+  /*  permet le sticky du bouton */
   display:flex;
   flex-direction:column;
 }
@@ -523,4 +523,55 @@ input:focus, select:focus{
 .modal__right::-webkit-scrollbar-thumb{
   background: rgba(0,0,0,.12);
   border-radius: 999px;
+}
+
+/* etoiles */
+.star {
+  font-size: 16px;
+  margin-right: 1px;
+}
+
+.star--full {
+  color: #f5b301;
+}
+
+.star--half {
+  color: #f5b301;
+  opacity: 0.6;
+}
+
+.star--empty {
+  color: #cfcfcf;
+}
+
+.rating-na {
+  color: #8a8a8a;
+  font-style: italic;
+  font-size: 14px;
+}
+
+.rating-count {
+  color: #666;
+  font-size: 13px;
+  margin-left: 4px;
+}
+.formFeedback {
+  margin-top: 8px;
+  font-size: 0.95rem;
+  color: #b42318;
+}
+
+.distanceModeGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.distanceActions {
+  margin-top: 10px;
+}
+
+.hidden {
+  display: none;
 }

@@ -36,6 +36,8 @@
           <button class="btn btn--ghost" id="btnAdvanced" type="button">Filtres avancés</button>
         </div>
 
+        <p id="quickSearchFeedback" class="formFeedback hidden" aria-live="polite"></p>
+
         <div class="homeChips">
           <button class="chipBtn" data-q="Downtown">Downtown</button>
           <button class="chipBtn" data-q="ByWard">ByWard</button>
@@ -109,6 +111,28 @@
       </div>
 
       <div class="field">
+        <label>Source de distance</label>
+
+        <div class="distanceModeGroup">
+          <label class="chip">
+            <input type="radio" name="distanceMode" id="distanceModeCenter" value="center" checked />
+            Centre d’Ottawa
+          </label>
+
+          <label class="chip">
+            <input type="radio" name="distanceMode" id="distanceModeUser" value="user" />
+            Ma position actuelle
+          </label>
+        </div>
+
+        <div class="distanceActions">
+          <button class="btn btn--ghost" id="btnUseMyLocation" type="button">Activer ma position</button>
+        </div>
+
+        <div class="hint" id="locationStatus">Distance calculée depuis le centre d’Ottawa.</div>
+      </div>
+
+      <div class="field">
         <label>Contraintes alimentaires</label>
         <div class="chips">
           <label class="chip"><input type="checkbox" id="veg" /> Végétarien</label>
@@ -133,11 +157,13 @@
           <label for="sortBy">Trier par</label>
           <select id="sortBy">
             <option value="score">Pertinence</option>
-            <option value="rating">Note (CityTaste)</option>
+            <option value="rating">Note</option>
             <option value="distance">Distance</option>
           </select>
         </div>
       </div>
+
+      <p id="filtersFeedback" class="formFeedback hidden" aria-live="polite"></p>
 
       <div class="actions">
         <button class="btn btn--primary" id="btnReco" type="button">Recommander</button>
@@ -151,7 +177,7 @@
         <h2>CityTaste</h2>
         <p class="muted">
           Clique sur un lieu dans les résultats pour afficher la fiche détaillée.
-          Les photos s’affichent quand elles sont disponibles, sinon un visuel neutre est utilisé.
+          Meilleurs restaurants & hébergements à Ottawa.
         </p>
 
         <div class="side__kpis">
@@ -220,7 +246,7 @@
         <div class="modal__left">
           <div class="kpis">
             <div class="kpi">
-              <div class="kpi__label">Note (CityTaste)</div>
+              <div class="kpi__label">Note</div>
               <div class="kpi__value" id="mRating">—</div>
             </div>
             <div class="kpi">
