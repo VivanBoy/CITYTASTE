@@ -1,4 +1,5 @@
 # CityTaste
+🇫🇷 Version française : [README.fr.md](README.fr.md)
 
 <p align="center">
   <strong>An AI-powered recommendation platform for discovering restaurants and accommodations in Ottawa.</strong>
