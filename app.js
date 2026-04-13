@@ -1,26 +1,150 @@
 // CityTaste — Ottawa (CSV OSM) + Landing + Results Search + Thumbnails
 // - Validation stricte du bouton Explorer
-// - Filtre cuisine corrigé (filtre dur)
+// - Autocomplete cuisine dynamique (jap -> japanese, etc.)
+// - Filtre cuisine précis + catégories larges
 // - Tri amélioré (pertinence / note / distance)
 // - "Pourquoi recommandé" plus intelligent
 // - Distance calculée depuis le centre d’Ottawa OU la position actuelle de l’utilisateur
+// - Option FR / EN
+// - Chatbot CityTaste intégré
 // IMPORTANT: lancer via Live Server / http.server pour que fetch CSV marche
-
-const CSV_CANDIDATE_PATHS = [
-  "data/processed/ottawa_places_enriched_google_photos.csv",
-  "data/processed/ottawa_places_enriched_google.csv",
-  "data/processed/ottawa_places_cleaned_v2.csv",
-  "data/ottawa_places_cleaned_v2.csv",
-  "ottawa_places_cleaned_v2.csv",
+const CSV_CANDIDATE_PATHS = [ "data/processed/ottawa_places_enriched_google_photos.csv",
+  "data/processed/ottawa_places_enriched_cuisine_final.csv",
 ];
+
+const CSV_BASE_PATH = "data/processed/ottawa_places_enriched_google_photos.csv";
+const CSV_CUISINE_PATH = "data/processed/ottawa_places_enriched_cuisine_final.csv";
+
+/**
+ * Colonnes qu'on veut prendre SEULEMENT du 2e fichier
+ * Ajoute / enlève des colonnes ici si besoin
+ */
+const CUISINE_FIELDS_FROM_SECOND = [
+  "cuisine",
+  "cuisine_list",
+  "cuisine_norm",
+  "cuisine_original",
+  "cuisine_source_url",
+  "cuisine_enrichment_confidence",
+  "cuisine_enrichment_method",
+  "cuisine_updated"
+];
+
+/**
+ * Charge un CSV puis le parse avec ta fonction parseCSV existante
+ */
+async function fetchCSVRows(path) {
+  const res = await fetch(path, { cache: "no-store" });
+
+  if (!res.ok) {
+    throw new Error(`Impossible de charger le fichier : ${path}`);
+  }
+
+  const text = await res.text();
+  return parseCSV(text); // ta fonction actuelle de parsing
+}
+
+/**
+ * Nettoie une valeur texte
+ */
+function cleanValue(value) {
+  return (value ?? "").toString().trim();
+}
+
+/**
+ * Détermine si une valeur est utilisable
+ * Ici, "not_applicable" est accepté car dans ton fichier final
+ * il peut être volontairement mis pour certains lieux.
+ */
+function isUsableCuisineValue(value) {
+  const v = cleanValue(value).toLowerCase();
+
+  return v !== "" && v !== "unknown" && v !== "null" && v !== "undefined";
+}
+
+/**
+ * Construit une clé de correspondance entre les deux fichiers
+ * On essaie d'être plus fiable avec :
+ * - name
+ * - place_type
+ * - lat
+ * - lon
+ * - address
+ */
+function buildPlaceKey(row) {
+  const name = cleanValue(row.name).toLowerCase();
+  const placeType = cleanValue(row.place_type).toLowerCase();
+  const lat = cleanValue(row.lat).toLowerCase();
+  const lon = cleanValue(row.lon).toLowerCase();
+  const address = cleanValue(row.address || row.addr_full).toLowerCase();
+
+  return [name, placeType, lat, lon, address].join("||");
+}
+
+/**
+ * Copie seulement les colonnes cuisine du 2e fichier
+ * vers la ligne du 1er fichier
+ */
+function mergeCuisineFields(baseRow, cuisineRow) {
+  const merged = { ...baseRow };
+
+  for (const field of CUISINE_FIELDS_FROM_SECOND) {
+    const newValue = cuisineRow[field];
+    const oldValue = baseRow[field];
+
+    if (isUsableCuisineValue(newValue)) {
+      merged[field] = newValue;
+    } else if (oldValue !== undefined) {
+      merged[field] = oldValue;
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Charge le fichier principal + le fichier cuisine,
+ * puis fusionne seulement les champs cuisine
+ */
+async function loadPlacesWithCuisineMerge() {
+  const baseRows = await fetchCSVRows(CSV_BASE_PATH);
+  const cuisineRows = await fetchCSVRows(CSV_CUISINE_PATH);
+
+  const cuisineMap = new Map();
+
+  for (const row of cuisineRows) {
+    const key = buildPlaceKey(row);
+
+    if (cleanValue(key).replace(/\|/g, "") !== "") {
+      cuisineMap.set(key, row);
+    }
+  }
+
+  const mergedRows = baseRows.map((baseRow) => {
+    const key = buildPlaceKey(baseRow);
+    const cuisineRow = cuisineMap.get(key);
+
+    if (!cuisineRow) {
+      return baseRow;
+    }
+
+    return mergeCuisineFields(baseRow, cuisineRow);
+  });
+
+  return mergedRows;
+}
 
 // Centre Ottawa (fallback)
 const OTTAWA_CENTER = { lat: 45.4215, lon: -75.6972 };
 const DEFAULT_MAX_KM = 8;
+const LANG_STORAGE_KEY = "citytaste_lang";
 
 let PLACES = [];
 let currentResultsAll = [];
 let currentPrefs = null;
+let cuisineOptions = [];
+let activeCuisineIndex = -1;
+let currentLang = localStorage.getItem(LANG_STORAGE_KEY) || "fr";
 
 const locationState = {
   mode: "center",
@@ -38,6 +162,8 @@ const resultsView = el("resultsView");
 
 const btnNavHome = el("btnNavHome");
 const btnNavFilters = el("btnNavFilters");
+const btnLangFr = el("btnLangFr");
+const btnLangEn = el("btnLangEn");
 
 const quickSearch = el("quickSearch");
 const btnExplore = el("btnExplore");
@@ -72,6 +198,11 @@ const distanceModeUser = el("distanceModeUser");
 const btnUseMyLocation = el("btnUseMyLocation");
 const locationStatus = el("locationStatus");
 
+// Cuisine autocomplete (nouveau HTML) + fallback select (ancien HTML)
+const cuisineHidden = el("cuisine");
+const cuisineInput = el("cuisineInput");
+const cuisineSuggestions = el("cuisineSuggestions");
+
 // Modal
 const modal = el("detailsModal");
 const overlay = el("modalOverlay");
@@ -92,6 +223,294 @@ const mHours = el("mHours");
 const mPhone = el("mPhone");
 const mWebsite = el("mWebsite");
 const mMaps = el("mMaps");
+
+const translations = {
+  fr: {
+    navHome: "Accueil",
+    navFilters: "Filtres",
+    heroTitle: "Trouve ton prochain endroit à Ottawa",
+    heroText: "Recherche par nom, quartier ou adresse. Ensuite, affine avec les filtres si besoin.",
+    quickSearchPlaceholder: "Ex: Vanier, ByWard, Hilton, sushi, pizza...",
+    explore: "Explorer",
+    advancedFilters: "Filtres avancés",
+
+    dataStatusLabel: "Statut",
+    dataCountLabel: "Lieux disponibles",
+    dataSourceLabel: "Source",
+
+    preferences: "Préférences",
+    placeType: "Type de lieu",
+    typeAny: "Restaurant + Hébergement",
+    typeRestaurant: "Restaurants seulement",
+    typeHotel: "Hébergements seulement",
+
+    cuisineCategory: "Cuisine / Catégorie",
+    cuisinePlaceholder: "Ex: jap, thai, pizza, ethi...",
+    cuisineHint: "Tape quelques lettres, puis clique sur la suggestion.",
+    noCuisineSuggestion: "Aucune suggestion",
+
+    budget: "Budget",
+    budgetAny: "Peu importe",
+    budgetLow: "$ (économique)",
+    budgetMid: "$$ (moyen)",
+    budgetHigh: "$$$ (élevé)",
+
+    maxDistance: "Distance max (km)",
+    distanceSource: "Source de distance",
+    ottawaCenter: "Centre d’Ottawa",
+    myLocation: "Ma position actuelle",
+    activateLocation: "Activer ma position",
+
+    dietary: "Contraintes alimentaires",
+    veg: "Végétarien",
+    halal: "Halal",
+    glutenfree: "Sans gluten",
+
+    area: "Zone (optionnel)",
+    areaPlaceholder: "Ex: St Laurent, Centretown, Vanier...",
+    areaHint: "La zone est utilisée comme mot-clé (quartier/adresse).",
+
+    topN: "Top-N",
+    sortBy: "Trier par",
+    sortScore: "Pertinence",
+    sortRating: "Note",
+    sortDistance: "Distance",
+
+    recommend: "Recommander",
+    reset: "Réinitialiser",
+
+    sideText: "Clique sur un lieu dans les résultats pour afficher la fiche détaillée. Meilleurs restaurants & hébergements à Ottawa.",
+    places: "Lieux",
+    restaurants: "Restaurants",
+    hotels: "Hébergements",
+
+    results: "Résultats",
+    backFilters: "Filtres",
+    backHome: "Accueil",
+    resultsSearchPlaceholder: "Rechercher dans ces résultats (nom, quartier, adresse)...",
+    clear: "Effacer",
+
+    modalTags: "Tags",
+    modalWhy: "Pourquoi cette recommandation ?",
+    modalInfo: "Informations",
+    address: "Adresse",
+    neighbourhood: "Quartier",
+    hours: "Horaires",
+    phone: "Téléphone",
+    website: "Website",
+    openMaps: "Ouvrir sur Google Maps",
+
+    modalRatingLabel: "Note",
+    modalBudgetLabel: "Budget",
+    modalDistanceLabel: "Distance",
+    modalScoreLabel: "Score",
+
+    statusLoading: "Chargement…",
+    statusOk: "OK",
+    statusError: "Erreur",
+
+    quickSearchEmpty: "Entre au moins un mot-clé avant de cliquer sur Explorer.",
+    filtersEmpty: "Ajoute au moins une contrainte avant de demander des recommandations.",
+    locationNeeded: "Active d’abord votre position ou repasse au centre d’Ottawa.",
+    noResults: "Aucun résultat pour cette recherche.",
+    noteUnavailable: "Note non disponible",
+    clickPlace: "Clique sur un lieu pour voir la fiche détaillée.",
+    filteredBy: 'Filtré par : "{query}"',
+
+    locationCenterMsg: "Distance calculée depuis le centre d’Ottawa.",
+    locationUserMsg: "Distance calculée depuis votre position actuelle.",
+    locationDetected: "Position détectée. La distance sera calculée depuis votre position actuelle.",
+    locationDenied: "Autorisation refusée. La distance reste calculée depuis le centre d’Ottawa.",
+    locationUnavailable: "La géolocalisation n’est pas disponible sur ce navigateur. Le centre d’Ottawa est utilisé.",
+    locationError: "Impossible de récupérer la position. Le centre d’Ottawa est utilisé.",
+    locationAsking: "Demande de localisation en cours…",
+
+    resultsCountOne: "résultat",
+    resultsCountMany: "résultats",
+
+    searchPrefix: "Recherche",
+    typePrefix: "Type",
+    cuisinePrefix: "Cuisine",
+    budgetPrefix: "Budget",
+    distanceMaxPrefix: "Distance max",
+    fromPrefix: "Depuis",
+    constraintsPrefix: "Contraintes",
+    areaPrefix: "Zone",
+
+    anyDash: "—",
+    allTypes: "tous",
+    constraintsNone: "—",
+
+    tagWebsite: "Site web",
+    tagPhone: "Téléphone",
+    tagHours: "Horaires",
+    tagAccessibility: "Accessibilité",
+    scoreLabel: "Score",
+
+    whyBecause: "Recommandé car",
+    whySearchMatch: 'il correspond à votre recherche "{query}"',
+    whyCuisineMatch: "la cuisine {cuisine} demandée est bien respectée",
+    whyAreaMatch: "la zone demandée correspond",
+    whyDistanceTop: "il fait partie des options les plus proches ({km} km depuis {origin})",
+    whyDistance: "il se trouve à {km} km depuis {origin}",
+    whyRatingTop: "sa note ressort bien ({rating}/5{count})",
+    whyRatingGood: "sa bonne note renforce la recommandation ({rating}/5)",
+    whyFallback: "c’est l’un des meilleurs compromis entre pertinence, distance et qualité des informations disponibles",
+    cuisineExplorerTitle: "Explorer par cuisine",
+    cuisineExplorerSubtitle: "Découvre rapidement les cuisines les plus présentes dans le dataset.",
+    cuisineExplorerSeeAll: "Voir toutes",
+    cuisineDirectoryTitle: "Toutes les cuisines",
+    cuisineDirectorySubtitle: "Choisis une cuisine pour voir tous les lieux correspondants dans le dataset.",
+    cuisineDirectorySearchPlaceholder: "Rechercher une cuisine...",
+    cuisineDirectoryClose: "Fermer",
+    cuisineDirectoryOpen: "Ouvrir cette cuisine",
+    cuisineDirectoryEmpty: "Aucune cuisine trouvée",
+    cuisineDirectoryCount: "{count} lieux"
+  },
+
+  en: {
+    navHome: "Home",
+    navFilters: "Filters",
+    heroTitle: "Find your next place in Ottawa",
+    heroText: "Search by name, neighbourhood, or address. Then refine with filters if needed.",
+    quickSearchPlaceholder: "Ex: Vanier, ByWard, Hilton, sushi, pizza...",
+    explore: "Explore",
+    advancedFilters: "Advanced filters",
+
+    dataStatusLabel: "Status",
+    dataCountLabel: "Available places",
+    dataSourceLabel: "Source",
+
+    preferences: "Preferences",
+    placeType: "Place type",
+    typeAny: "Restaurant + Accommodation",
+    typeRestaurant: "Restaurants only",
+    typeHotel: "Accommodations only",
+
+    cuisineCategory: "Cuisine / Category",
+    cuisinePlaceholder: "Ex: jap, thai, pizza, ethi...",
+    cuisineHint: "Type a few letters, then click a suggestion.",
+    noCuisineSuggestion: "No suggestions",
+
+    budget: "Budget",
+    budgetAny: "Any",
+    budgetLow: "$ (budget)",
+    budgetMid: "$$ (mid-range)",
+    budgetHigh: "$$$ (high)",
+
+    maxDistance: "Max distance (km)",
+    distanceSource: "Distance source",
+    ottawaCenter: "Ottawa center",
+    myLocation: "My current location",
+    activateLocation: "Enable my location",
+
+    dietary: "Dietary constraints",
+    veg: "Vegetarian",
+    halal: "Halal",
+    glutenfree: "Gluten-free",
+
+    area: "Area (optional)",
+    areaPlaceholder: "Ex: St Laurent, Centretown, Vanier...",
+    areaHint: "The area is used as a keyword (neighbourhood/address).",
+
+    topN: "Top-N",
+    sortBy: "Sort by",
+    sortScore: "Relevance",
+    sortRating: "Rating",
+    sortDistance: "Distance",
+
+    recommend: "Recommend",
+    reset: "Reset",
+
+    sideText: "Click a place in the results to open its detailed profile. Best restaurants & accommodations in Ottawa.",
+    places: "Places",
+    restaurants: "Restaurants",
+    hotels: "Accommodations",
+
+    results: "Results",
+    backFilters: "Filters",
+    backHome: "Home",
+    resultsSearchPlaceholder: "Search within these results (name, neighbourhood, address)...",
+    clear: "Clear",
+
+    modalTags: "Tags",
+    modalWhy: "Why this recommendation?",
+    modalInfo: "Information",
+    address: "Address",
+    neighbourhood: "Neighbourhood",
+    hours: "Hours",
+    phone: "Phone",
+    website: "Website",
+    openMaps: "Open in Google Maps",
+
+    modalRatingLabel: "Rating",
+    modalBudgetLabel: "Budget",
+    modalDistanceLabel: "Distance",
+    modalScoreLabel: "Score",
+
+    statusLoading: "Loading…",
+    statusOk: "OK",
+    statusError: "Error",
+
+    quickSearchEmpty: "Enter at least one keyword before clicking Explore.",
+    filtersEmpty: "Add at least one constraint before requesting recommendations.",
+    locationNeeded: "Enable your location first or switch back to Ottawa center.",
+    noResults: "No results found for this search.",
+    noteUnavailable: "Rating not available",
+    clickPlace: "Click a place to view the detailed profile.",
+    filteredBy: 'Filtered by: "{query}"',
+
+    locationCenterMsg: "Distance is calculated from Ottawa center.",
+    locationUserMsg: "Distance is calculated from your current location.",
+    locationDetected: "Location detected. Distance will be calculated from your current position.",
+    locationDenied: "Permission denied. Distance remains calculated from Ottawa center.",
+    locationUnavailable: "Geolocation is not available in this browser. Ottawa center is used.",
+    locationError: "Unable to retrieve location. Ottawa center is used.",
+    locationAsking: "Requesting location…",
+
+    resultsCountOne: "result",
+    resultsCountMany: "results",
+
+    searchPrefix: "Search",
+    typePrefix: "Type",
+    cuisinePrefix: "Cuisine",
+    budgetPrefix: "Budget",
+    distanceMaxPrefix: "Max distance",
+    fromPrefix: "From",
+    constraintsPrefix: "Constraints",
+    areaPrefix: "Area",
+
+    anyDash: "—",
+    allTypes: "all",
+    constraintsNone: "—",
+
+    tagWebsite: "Website",
+    tagPhone: "Phone",
+    tagHours: "Hours",
+    tagAccessibility: "Accessibility",
+    scoreLabel: "Score",
+
+    whyBecause: "Recommended because",
+    whySearchMatch: 'it matches your search "{query}"',
+    whyCuisineMatch: "the requested {cuisine} cuisine is respected",
+    whyAreaMatch: "the requested area matches",
+    whyDistanceTop: "it is among the closest options ({km} km from {origin})",
+    whyDistance: "it is {km} km from {origin}",
+    whyRatingTop: "its rating stands out ({rating}/5{count})",
+    whyRatingGood: "its strong rating reinforces the recommendation ({rating}/5)",
+    whyFallback: "it offers one of the best balances between relevance, distance, and available information quality",
+    cuisineExplorerTitle: "Explore by cuisine",
+    cuisineExplorerSubtitle: "Quickly discover the most common cuisines in the dataset.",
+    cuisineExplorerSeeAll: "See all",
+    cuisineDirectoryTitle: "All cuisines",
+    cuisineDirectorySubtitle: "Choose a cuisine to view all matching places in the dataset.",
+    cuisineDirectorySearchPlaceholder: "Search a cuisine...",
+    cuisineDirectoryClose: "Close",
+    cuisineDirectoryOpen: "Open this cuisine",
+    cuisineDirectoryEmpty: "No cuisine found",
+    cuisineDirectoryCount: "{count} places"
+  }
+};
 
 // Utils
 function safeText(x) {
@@ -128,6 +547,21 @@ function normalizeText(v) {
     .trim();
 }
 
+function titleCase(v) {
+  return safeText(v)
+    .split(" ")
+    .map(part => part ? part.charAt(0).toUpperCase() + part.slice(1) : "")
+    .join(" ");
+}
+
+function t(key, vars = {}) {
+  let text = translations[currentLang]?.[key] ?? key;
+  Object.entries(vars).forEach(([k, v]) => {
+    text = text.replaceAll(`{${k}}`, v);
+  });
+  return text;
+}
+
 function setInlineMessage(node, message = "") {
   if (!node) return;
   node.textContent = message;
@@ -144,12 +578,15 @@ function updateLocationStatus(message) {
   locationStatus.textContent = message;
 }
 
-function typeLabel(t) {
-  return t === "restaurant" ? "Restaurant" : "Hébergement";
+function typeLabel(tValue) {
+  if (tValue === "restaurant") return currentLang === "en" ? "Restaurant" : "Restaurant";
+  return currentLang === "en" ? "Accommodation" : "Hébergement";
 }
 
 function cuisineLabel(c) {
-  const map = {
+  const key = normalizeText(c);
+
+  const mapFr = {
     italian: "Italien",
     indian: "Indien",
     asian: "Asiatique",
@@ -164,14 +601,92 @@ function cuisineLabel(c) {
     mexican: "Mexicain",
     french: "Français",
     pizza: "Pizza",
-    any: "—",
-    unknown: "Cuisine non précisée"
+    ethiopian: "Éthiopien",
+    eritrean: "Érythréen",
+    moroccan: "Marocain",
+    tunisian: "Tunisien",
+    algerian: "Algérien",
+    lebanese: "Libanais",
+    "middle eastern": "Moyen-Orient",
+    shawarma: "Shawarma",
+    american: "Américain",
+    burger: "Burgers",
+    barbecue: "Barbecue",
+    brunch: "Brunch",
+    breakfast: "Déjeuner",
+    "coffee shop": "Café",
+    bakery: "Boulangerie",
+    caribbean: "Caraïbéen",
+    any: t("anyDash"),
+    unknown: currentLang === "en" ? "Cuisine not specified" : "Cuisine non précisée"
   };
-  return map[c] || c || "Cuisine non précisée";
+
+  const mapEn = {
+    italian: "Italian",
+    indian: "Indian",
+    asian: "Asian",
+    african: "African",
+    canadian: "Canadian",
+    cafe: "Cafe / Brunch",
+    chinese: "Chinese",
+    japanese: "Japanese",
+    vietnamese: "Vietnamese",
+    thai: "Thai",
+    korean: "Korean",
+    mexican: "Mexican",
+    french: "French",
+    pizza: "Pizza",
+    ethiopian: "Ethiopian",
+    eritrean: "Eritrean",
+    moroccan: "Moroccan",
+    tunisian: "Tunisian",
+    algerian: "Algerian",
+    lebanese: "Lebanese",
+    "middle eastern": "Middle Eastern",
+    shawarma: "Shawarma",
+    american: "American",
+    burger: "Burgers",
+    barbecue: "Barbecue",
+    brunch: "Brunch",
+    breakfast: "Breakfast",
+    "coffee shop": "Cafe",
+    bakery: "Bakery",
+    caribbean: "Caribbean",
+    any: t("anyDash"),
+    unknown: "Cuisine not specified"
+  };
+
+  const map = currentLang === "en" ? mapEn : mapFr;
+  return map[key] || titleCase(key) || (currentLang === "en" ? "Cuisine not specified" : "Cuisine non précisée");
 }
 
 function budgetLabel(b) {
-  return b === "low" ? "$" : b === "mid" ? "$$" : b === "high" ? "$$$" : "—";
+  return b === "low" ? "$" : b === "mid" ? "$$" : b === "high" ? "$$$" : t("anyDash");
+}
+
+function setControlText(labelEl, text) {
+  if (!labelEl) return;
+  const firstElement = labelEl.firstElementChild;
+  if (!firstElement) {
+    labelEl.textContent = text;
+    return;
+  }
+
+  const preservedNode = firstElement;
+  labelEl.innerHTML = "";
+  labelEl.appendChild(preservedNode);
+  labelEl.append(` ${text}`);
+}
+
+function updateLanguageButtons() {
+  btnLangFr?.classList.toggle("is-active", currentLang === "fr");
+  btnLangEn?.classList.toggle("is-active", currentLang === "en");
+}
+
+function setLanguage(lang) {
+  currentLang = lang === "en" ? "en" : "fr";
+  localStorage.setItem(LANG_STORAGE_KEY, currentLang);
+  updateLanguageUI();
 }
 
 // Distance
@@ -200,11 +715,13 @@ function getSelectedDistanceMode() {
 }
 
 function getDistanceOriginLabel(prefs) {
-  return prefs?.distanceMode === "user" ? "ma position actuelle" : "centre d’Ottawa";
+  return prefs?.distanceMode === "user" ? t("myLocation") : t("ottawaCenter");
 }
 
 function getDistanceOriginShort(prefs) {
-  return prefs?.distanceMode === "user" ? "votre position" : "le centre d’Ottawa";
+  return prefs?.distanceMode === "user"
+    ? (currentLang === "en" ? "your location" : "votre position")
+    : (currentLang === "en" ? "Ottawa center" : "le centre d’Ottawa");
 }
 
 async function requestUserLocation() {
@@ -212,11 +729,11 @@ async function requestUserLocation() {
     locationState.mode = "center";
     if (distanceModeCenter) distanceModeCenter.checked = true;
     if (distanceModeUser) distanceModeUser.checked = false;
-    updateLocationStatus("La géolocalisation n’est pas disponible sur ce navigateur. Le centre d’Ottawa est utilisé.");
+    updateLocationStatus(t("locationUnavailable"));
     return false;
   }
 
-  updateLocationStatus("Demande de localisation en cours…");
+  updateLocationStatus(t("locationAsking"));
 
   return await new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
@@ -230,7 +747,7 @@ async function requestUserLocation() {
 
         if (distanceModeUser) distanceModeUser.checked = true;
 
-        updateLocationStatus("Position détectée. La distance sera calculée depuis votre position actuelle.");
+        updateLocationStatus(t("locationDetected"));
         resolve(true);
       },
       (err) => {
@@ -241,9 +758,7 @@ async function requestUserLocation() {
         if (distanceModeUser) distanceModeUser.checked = false;
 
         updateLocationStatus(
-          err.code === 1
-            ? "Autorisation refusée. La distance reste calculée depuis le centre d’Ottawa."
-            : "Impossible de récupérer la position. Le centre d’Ottawa est utilisé."
+          err.code === 1 ? t("locationDenied") : t("locationError")
         );
         resolve(false);
       },
@@ -270,6 +785,7 @@ function computeDistanceFromPrefs(place, prefs) {
 
 // Views
 function showHome() {
+  closeCuisineDirectory();
   homeView?.classList.remove("hidden");
   builderView?.classList.add("hidden");
   resultsView?.classList.add("hidden");
@@ -277,6 +793,7 @@ function showHome() {
 }
 
 function showFilters() {
+  closeCuisineDirectory();
   homeView?.classList.add("hidden");
   builderView?.classList.remove("hidden");
   resultsView?.classList.add("hidden");
@@ -284,6 +801,7 @@ function showFilters() {
 }
 
 function showResults() {
+  closeCuisineDirectory();
   homeView?.classList.add("hidden");
   builderView?.classList.add("hidden");
   resultsView?.classList.remove("hidden");
@@ -303,7 +821,10 @@ async function loadCSV() {
       return await tryFetchText(path);
     } catch (e) {}
   }
-  throw new Error("Impossible de charger les données. Lance le projet via Live Server ou http.server.");
+  throw new Error(currentLang === "en"
+    ? "Unable to load data. Start the project with Live Server or http.server."
+    : "Impossible de charger les données. Lance le projet via Live Server ou http.server."
+  );
 }
 
 function splitCSVLine(line, delim) {
@@ -385,25 +906,70 @@ function parseCuisineList(s) {
 }
 
 function normalizeType(place_type) {
-  const t = safeText(place_type).toLowerCase();
-  if (t === "restaurant") return "restaurant";
-  if (["hotel", "guest_house", "motel", "hostel"].includes(t)) return "hotel";
+  const tValue = safeText(place_type).toLowerCase();
+  if (tValue === "restaurant") return "restaurant";
+  if (["hotel", "guest_house", "motel", "hostel"].includes(tValue)) return "hotel";
   return "restaurant";
 }
 
 // Cuisine helpers
-const CUISINE_EQUIVALENTS = {
+const CUISINE_GROUPS = {
   italian: ["italian", "pizza", "pasta"],
   indian: ["indian", "pakistani", "nepalese", "bangladeshi", "punjabi"],
   asian: ["asian", "chinese", "japanese", "vietnamese", "thai", "korean", "sushi", "ramen", "filipino"],
   african: ["african", "ethiopian", "eritrean", "moroccan", "algerian", "tunisian", "senegalese", "somali", "nigerian", "ghanaian"],
-  canadian: ["canadian", "american", "burger", "bbq", "grill", "diner", "steakhouse"],
-  cafe: ["cafe", "coffee", "coffee shop", "bakery", "brunch", "breakfast", "tea room", "bistro"]
+  canadian: ["canadian", "american", "burger", "bbq", "barbecue", "grill", "diner", "steakhouse"],
+  cafe: ["cafe", "coffee", "coffee shop", "bakery", "brunch", "breakfast", "tea room", "bistro"],
+  "middle eastern": ["middle eastern", "lebanese", "shawarma", "syrian", "turkish", "persian"],
+  mexican: ["mexican", "taco", "burrito"],
+  caribbean: ["caribbean", "jamaican", "haitian"]
 };
 
-const CUISINE_TOKEN_TO_CANON = Object.entries(CUISINE_EQUIVALENTS).reduce((acc, [canon, raws]) => {
+const CUISINE_ALIASES = {
+  jap: "japanese",
+  japon: "japanese",
+  japo: "japanese",
+  tha: "thai",
+  viet: "vietnamese",
+  ethi: "ethiopian",
+  ethio: "ethiopian",
+  afr: "african",
+  indi: "indian",
+  bbq: "barbecue",
+  barbq: "barbecue",
+  piz: "pizza",
+  pizz: "pizza",
+  cafe: "cafe",
+  "café": "cafe",
+  brunch: "brunch",
+  shaw: "shawarma",
+  asiatique: "asian",
+  africain: "african",
+  italien: "italian",
+  indien: "indian",
+  canadien: "canadian",
+  japonais: "japanese",
+  vietnamien: "vietnamese",
+  thai: "thai"
+};
+
+const GENERIC_CUISINE_TOKENS = new Set([
+  "food",
+  "foods",
+  "restaurant",
+  "restaurants",
+  "cuisine",
+  "kitchen",
+  "grill",
+  "takeout",
+  "delivery"
+]);
+
+const CUISINE_TOKEN_TO_GROUPS = Object.entries(CUISINE_GROUPS).reduce((acc, [group, raws]) => {
   raws.forEach(raw => {
-    acc[normalizeText(raw)] = canon;
+    const key = normalizeText(raw);
+    if (!acc[key]) acc[key] = [];
+    if (!acc[key].includes(group)) acc[key].push(group);
   });
   return acc;
 }, {});
@@ -420,22 +986,21 @@ function splitRawCuisineValue(raw) {
 }
 
 function normalizeCuisineToken(token) {
-  const t = normalizeText(token);
-  if (!t) return "";
+  let tValue = normalizeText(token);
+  if (!tValue) return "";
 
-  if (["any", "unknown", "unspecified", "none", "na"].includes(t)) {
+  if (CUISINE_ALIASES[tValue]) {
+    tValue = CUISINE_ALIASES[tValue];
+  }
+
+  if (["any", "unknown", "unspecified", "none", "na", "n a"].includes(tValue)) {
     return "unknown";
   }
 
-  if (CUISINE_TOKEN_TO_CANON[t]) {
-    return CUISINE_TOKEN_TO_CANON[t];
-  }
+  if (GENERIC_CUISINE_TOKENS.has(tValue)) return "";
+  if (tValue.length <= 1) return "";
 
-  for (const [rawToken, canon] of Object.entries(CUISINE_TOKEN_TO_CANON)) {
-    if (t.includes(rawToken)) return canon;
-  }
-
-  return t;
+  return tValue;
 }
 
 function inferCuisineData(row, tagsObj) {
@@ -449,27 +1014,42 @@ function inferCuisineData(row, tagsObj) {
     safeText(tagsObj?.["cuisine:type"])
   ];
 
-  const cuisineTokens = [...new Set(
+  const specificTokens = [...new Set(
     rawCandidates
       .flatMap(splitRawCuisineValue)
       .map(normalizeCuisineToken)
       .filter(Boolean)
+      .filter(token => token !== "unknown")
   )];
 
-  const cuisinePrimary = cuisineTokens[0] || "unknown";
+  const groupTokens = [...new Set(
+    specificTokens.flatMap(token => CUISINE_TOKEN_TO_GROUPS[token] || [])
+  )];
+
+  const primary = specificTokens[0] || groupTokens[0] || "unknown";
 
   return {
-    cuisine_primary: cuisinePrimary,
-    cuisine_tokens: cuisinePrimary === "unknown" ? [] : cuisineTokens,
+    cuisine_primary: primary,
+    cuisine_tokens: specificTokens,
+    cuisine_groups: groupTokens,
     cuisine_raw_list: listFromCsv
   };
 }
 
 function placeMatchesCuisine(place, desiredCuisine) {
-  if (!desiredCuisine || desiredCuisine === "any") return true;
+  const desired = normalizeText(desiredCuisine);
+  if (!desired || desired === "any") return true;
   if (place.type !== "restaurant") return false;
-  if (!Array.isArray(place.cuisine_tokens) || !place.cuisine_tokens.length) return false;
-  return place.cuisine_tokens.includes(desiredCuisine);
+
+  const specific = Array.isArray(place.cuisine_tokens) ? place.cuisine_tokens : [];
+  const groups = Array.isArray(place.cuisine_groups) ? place.cuisine_groups : [];
+  const allTokens = [...specific, ...groups];
+
+  return allTokens.some(token =>
+    token === desired ||
+    token.includes(desired) ||
+    desired.includes(token)
+  );
 }
 
 function placeMatchesSearchText(place, query) {
@@ -483,7 +1063,8 @@ function placeMatchesSearchText(place, query) {
     place.address,
     place.type,
     place.cuisine_norm,
-    ...(place.cuisine_tokens || [])
+    ...(place.cuisine_tokens || []),
+    ...(place.cuisine_groups || [])
   ].join(" "));
 
   const terms = q.split(" ").filter(Boolean);
@@ -498,6 +1079,571 @@ function matchesArea(place, areaValue) {
   const terms = q.split(" ").filter(Boolean);
 
   return terms.every(term => hay.includes(term));
+}
+
+function extractCuisineOptions(places) {
+  const set = new Set();
+
+  places
+    .filter(place => place.type === "restaurant")
+    .forEach(place => {
+      (place.cuisine_tokens || []).forEach(token => {
+        if (token && token !== "unknown") set.add(token);
+      });
+    });
+
+  return [...set].sort((a, b) => a.localeCompare(b, "fr"));
+}
+
+function getCuisineScore(option, query) {
+  if (!query) return 0;
+
+  const normalizedOption = normalizeText(option);
+  const aliasTarget = CUISINE_ALIASES[query];
+
+  if (normalizedOption === query) return 100;
+  if (aliasTarget && normalizedOption === aliasTarget) return 95;
+  if (normalizedOption.startsWith(query)) return 90;
+  if (normalizedOption.includes(query)) return 70;
+
+  return 0;
+}
+
+function hideCuisineSuggestions() {
+  if (!cuisineSuggestions) return;
+  cuisineSuggestions.classList.add("hidden");
+  cuisineSuggestions.innerHTML = "";
+  activeCuisineIndex = -1;
+}
+
+function getSelectedCuisineValue() {
+  if (cuisineInput && cuisineHidden && cuisineHidden.type === "hidden") {
+    return normalizeText(cuisineHidden.value) || "any";
+  }
+  return normalizeText(cuisineHidden?.value) || "any";
+}
+
+function setSelectedCuisineValue(value, alsoSetInput = true) {
+  const normalized = normalizeText(value) || "any";
+
+  if (cuisineHidden) {
+    cuisineHidden.value = normalized;
+  }
+
+  if (cuisineInput && alsoSetInput) {
+    cuisineInput.value = normalized === "any" ? "" : cuisineLabel(normalized);
+  }
+}
+
+function selectCuisine(value) {
+  setSelectedCuisineValue(value, true);
+  hideCuisineSuggestions();
+}
+
+function renderCuisineSuggestions(query) {
+  if (!cuisineSuggestions) return;
+
+  const q = normalizeText(query);
+
+  if (!q) {
+    hideCuisineSuggestions();
+    setSelectedCuisineValue("any", false);
+    return;
+  }
+
+  const results = cuisineOptions
+    .map(option => ({
+      value: option,
+      score: getCuisineScore(option, q)
+    }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.value.localeCompare(b.value, "fr"))
+    .slice(0, 8);
+
+  if (!results.length) {
+    cuisineSuggestions.innerHTML = `<div class="autocomplete__empty">${escapeHtml(t("noCuisineSuggestion"))}</div>`;
+    cuisineSuggestions.classList.remove("hidden");
+    activeCuisineIndex = -1;
+    setSelectedCuisineValue(q, false);
+    return;
+  }
+
+  cuisineSuggestions.innerHTML = results
+    .map((item, index) => `
+      <div class="autocomplete__item" data-value="${escapeHtml(item.value)}" data-index="${index}">
+        ${escapeHtml(cuisineLabel(item.value))}
+      </div>
+    `)
+    .join("");
+
+  cuisineSuggestions.classList.remove("hidden");
+  activeCuisineIndex = -1;
+  setSelectedCuisineValue(q, false);
+}
+
+function highlightCuisineItem(index) {
+  if (!cuisineSuggestions) return;
+  const items = [...cuisineSuggestions.querySelectorAll(".autocomplete__item")];
+  items.forEach(elm => elm.classList.remove("is-active"));
+
+  if (index >= 0 && index < items.length) {
+    items[index].classList.add("is-active");
+  }
+}
+
+function initCuisineAutocomplete() {
+  cuisineOptions = extractCuisineOptions(PLACES);
+
+  if (!cuisineInput || !cuisineSuggestions || !cuisineHidden || cuisineHidden.tagName === "SELECT") {
+    return;
+  }
+
+  cuisineInput.addEventListener("input", (e) => {
+    renderCuisineSuggestions(e.target.value);
+  });
+
+  cuisineInput.addEventListener("focus", () => {
+    if (cuisineInput.value.trim()) {
+      renderCuisineSuggestions(cuisineInput.value);
+    }
+  });
+
+  cuisineInput.addEventListener("keydown", (e) => {
+    const items = [...cuisineSuggestions.querySelectorAll(".autocomplete__item")];
+
+    if (!items.length) {
+      if (e.key === "Enter") {
+        setSelectedCuisineValue(cuisineInput.value, false);
+        hideCuisineSuggestions();
+      }
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeCuisineIndex = Math.min(activeCuisineIndex + 1, items.length - 1);
+      highlightCuisineItem(activeCuisineIndex);
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeCuisineIndex = Math.max(activeCuisineIndex - 1, 0);
+      highlightCuisineItem(activeCuisineIndex);
+    }
+
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeCuisineIndex >= 0 && items[activeCuisineIndex]) {
+        selectCuisine(items[activeCuisineIndex].dataset.value);
+      } else {
+        setSelectedCuisineValue(cuisineInput.value, false);
+        hideCuisineSuggestions();
+      }
+    }
+
+    if (e.key === "Escape") {
+      hideCuisineSuggestions();
+    }
+  });
+
+  cuisineSuggestions.addEventListener("click", (e) => {
+    const item = e.target.closest(".autocomplete__item");
+    if (!item) return;
+    selectCuisine(item.dataset.value || "any");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#cuisineAutocomplete")) {
+      hideCuisineSuggestions();
+    }
+  });
+}
+
+
+/* =========================
+   CUISINE EXPLORER / DIRECTORY
+========================= */
+
+const CUISINE_HOME_LIMIT = 8;
+const CUISINE_DIRECTORY_TOPN = 500;
+let cuisineDirectoryCatalog = [];
+
+const CUISINE_EMOJI_MAP = {
+  italian: "🍝",
+  pizza: "🍕",
+  indian: "🍛",
+  asian: "🥢",
+  chinese: "🥡",
+  japanese: "🍣",
+  sushi: "🍣",
+  vietnamese: "🍜",
+  thai: "🍜",
+  korean: "🍲",
+  african: "🌍",
+  ethiopian: "🌍",
+  eritrean: "🌍",
+  moroccan: "🌍",
+  tunisian: "🌍",
+  algerian: "🌍",
+  canadian: "🍁",
+  american: "🍔",
+  burger: "🍔",
+  barbecue: "🔥",
+  cafe: "☕",
+  coffee: "☕",
+  bakery: "🥐",
+  brunch: "🥞",
+  breakfast: "🥞",
+  dessert: "🍰",
+  desserts: "🍰",
+  vegetarian: "🥗",
+  vegan: "🌱",
+  healthy: "🥗",
+  halal: "🕌",
+  chicken: "🍗",
+  wings: "🍗",
+  shawarma: "🥙",
+  "middle eastern": "🥙",
+  lebanese: "🥙",
+  sandwiches: "🥪",
+  sandwich: "🥪",
+  mexican: "🌮",
+  caribbean: "🌴",
+  poutine: "🍟",
+  seafood: "🦞",
+  french: "🥖",
+  mediterranean: "🫒",
+  juice: "🧃",
+  smoothies: "🧃",
+  fusion: "✨",
+  diner: "🍽️"
+};
+
+const CUISINE_PALETTES = [
+  { bg: "#FFF4E8", soft: "#FFE2C2", strong: "#FF8A1F" },
+  { bg: "#EEF7FF", soft: "#D8EBFF", strong: "#3B82F6" },
+  { bg: "#F6EEFF", soft: "#E8D9FF", strong: "#8B5CF6" },
+  { bg: "#ECFDF3", soft: "#D1FADF", strong: "#12B76A" },
+  { bg: "#FFF1F3", soft: "#FFD6DD", strong: "#F04478" },
+  { bg: "#FFF8DB", soft: "#FCE588", strong: "#D4A72C" },
+  { bg: "#F3F4F6", soft: "#E5E7EB", strong: "#475467" },
+  { bg: "#EEF2FF", soft: "#C7D2FE", strong: "#4F46E5" }
+];
+
+function getCuisineEmoji(value) {
+  const normalized = normalizeText(value);
+  if (CUISINE_EMOJI_MAP[normalized]) return CUISINE_EMOJI_MAP[normalized];
+
+  const parts = normalized.split(" ");
+  for (const part of parts) {
+    if (CUISINE_EMOJI_MAP[part]) return CUISINE_EMOJI_MAP[part];
+  }
+
+  return "🍽️";
+}
+
+function getCuisinePalette(value) {
+  const normalized = normalizeText(value);
+  let hash = 0;
+
+  for (let i = 0; i < normalized.length; i++) {
+    hash = ((hash << 5) - hash) + normalized.charCodeAt(i);
+    hash |= 0;
+  }
+
+  const index = Math.abs(hash) % CUISINE_PALETTES.length;
+  return CUISINE_PALETTES[index];
+}
+
+function collectCuisineDirectoryCatalog() {
+  const counts = new Map();
+
+  PLACES
+    .filter(place => place.type === "restaurant")
+    .forEach(place => {
+      const tokens = [
+        ...(Array.isArray(place.cuisine_groups) ? place.cuisine_groups : []),
+        ...(Array.isArray(place.cuisine_tokens) ? place.cuisine_tokens : [])
+      ]
+        .map(token => normalizeText(token))
+        .filter(token => token && token !== "unknown");
+
+      const uniqueTokens = new Set(tokens);
+
+      uniqueTokens.forEach(token => {
+        counts.set(token, (counts.get(token) || 0) + 1);
+      });
+    });
+
+  return [...counts.entries()]
+    .map(([value, count]) => {
+      const palette = getCuisinePalette(value);
+      return {
+        value,
+        count,
+        label: cuisineLabel(value),
+        emoji: getCuisineEmoji(value),
+        palette
+      };
+    })
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return a.label.localeCompare(b.label, currentLang === "en" ? "en" : "fr");
+    });
+}
+
+function ensureCuisineExplorerMount() {
+  const host = document.querySelector(".side__content");
+  if (!host) return null;
+
+  let mount = el("cuisineExplorerSection");
+  if (!mount) {
+    mount = document.createElement("section");
+    mount.id = "cuisineExplorerSection";
+    mount.className = "cuisine-explorer";
+
+    const kpis = host.querySelector(".side__kpis");
+    if (kpis) {
+      kpis.insertAdjacentElement("afterend", mount);
+    } else {
+      host.appendChild(mount);
+    }
+  }
+
+  return mount;
+}
+
+function ensureCuisineDirectoryView() {
+  let view = el("cuisineDirectoryView");
+
+  if (!view) {
+    const html = `
+      <div id="cuisineDirectoryView" class="cuisine-directory" aria-hidden="true">
+        <div class="cuisine-directory__shell">
+          <div class="cuisine-directory__top">
+            <div>
+              <h2 id="cuisineDirectoryTitle" class="cuisine-directory__title"></h2>
+              <p id="cuisineDirectorySubtitle" class="cuisine-directory__subtitle"></p>
+            </div>
+
+            <div class="cuisine-directory__actions">
+              <input
+                id="cuisineDirectorySearch"
+                class="cuisine-directory__search"
+                type="text"
+                value=""
+              />
+              <button id="btnCloseCuisineDirectory" type="button" class="cuisine-directory__close"></button>
+            </div>
+          </div>
+
+          <div id="cuisineDirectoryGrid" class="cuisine-directory__grid"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", html);
+
+    el("btnCloseCuisineDirectory")?.addEventListener("click", closeCuisineDirectory);
+
+    el("cuisineDirectorySearch")?.addEventListener("input", (e) => {
+      renderCuisineDirectoryGrid(e.target.value || "");
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && el("cuisineDirectoryView")?.classList.contains("is-open")) {
+        closeCuisineDirectory();
+      }
+    });
+  }
+
+  return el("cuisineDirectoryView");
+}
+
+function openCuisineDirectory() {
+  const view = ensureCuisineDirectoryView();
+  if (!view) return;
+
+  renderCuisineDirectoryGrid("");
+  view.classList.add("is-open");
+  view.setAttribute("aria-hidden", "false");
+  document.body.classList.add("cuisine-directory-open");
+
+  const search = el("cuisineDirectorySearch");
+  if (search) {
+    search.value = "";
+    search.focus();
+  }
+}
+
+function closeCuisineDirectory() {
+  const view = el("cuisineDirectoryView");
+  if (!view) return;
+
+  view.classList.remove("is-open");
+  view.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("cuisine-directory-open");
+}
+
+function buildCuisineExplorerPrefs(cuisineValue) {
+  return {
+    type: "restaurant",
+    cuisine: normalizeText(cuisineValue),
+    budget: "any",
+    maxKm: 100,
+    veg: false,
+    halal: false,
+    glutenfree: false,
+    area: "",
+    topN: CUISINE_DIRECTORY_TOPN,
+    sortBy: "rating",
+    distanceMode: getSelectedDistanceMode(),
+    searchText: ""
+  };
+}
+
+function applyCuisineDirectoryFilter(cuisineValue) {
+  const normalized = normalizeText(cuisineValue);
+  if (!normalized || normalized === "unknown") return;
+
+  if (el("type")) el("type").value = "restaurant";
+  if (el("budget")) el("budget").value = "any";
+  if (el("maxKm")) el("maxKm").value = 100;
+  if (el("area")) el("area").value = "";
+  if (el("sortBy")) el("sortBy").value = "rating";
+  if (el("topN")) el("topN").value = 20;
+  if (el("veg")) el("veg").checked = false;
+  if (el("halal")) el("halal").checked = false;
+  if (el("glutenfree")) el("glutenfree").checked = false;
+
+  setSelectedCuisineValue(normalized, true);
+  hideCuisineSuggestions();
+
+  const prefs = buildCuisineExplorerPrefs(normalized);
+
+  const list = PLACES
+    .filter(place => place.type === "restaurant" && placeMatchesCuisine(place, normalized))
+    .map(place => ({
+      ...place,
+      distance_km: computeDistanceFromPrefs(place, prefs),
+      score: scorePlace(place, prefs),
+      why: explain(place, prefs)
+    }));
+
+  sortPlaces(list, prefs);
+  setResults(list, prefs);
+  closeCuisineDirectory();
+  showResults();
+}
+
+function renderCuisineExplorerCards() {
+  const mount = ensureCuisineExplorerMount();
+  if (!mount) return;
+
+  cuisineDirectoryCatalog = collectCuisineDirectoryCatalog();
+  const topItems = cuisineDirectoryCatalog.slice(0, CUISINE_HOME_LIMIT);
+
+  mount.innerHTML = `
+    <div class="cuisine-explorer__head">
+      <div>
+        <h3 class="cuisine-explorer__title">${escapeHtml(t("cuisineExplorerTitle"))}</h3>
+        <p class="cuisine-explorer__subtitle">${escapeHtml(t("cuisineExplorerSubtitle"))}</p>
+      </div>
+
+      <button id="btnOpenCuisineDirectory" type="button" class="cuisine-explorer__allBtn">
+        ${escapeHtml(t("cuisineExplorerSeeAll"))}
+      </button>
+    </div>
+
+    <div class="cuisine-explorer__grid">
+      ${
+        topItems.length
+          ? topItems.map(item => `
+              <button
+                type="button"
+                class="cuisine-explorer__card"
+                data-cuisine="${escapeHtml(item.value)}"
+                title="${escapeHtml(t("cuisineDirectoryOpen"))}"
+                style="
+                  --cx-bg:${item.palette.bg};
+                  --cx-soft:${item.palette.soft};
+                  --cx-strong:${item.palette.strong};
+                "
+              >
+                <div class="cuisine-explorer__emoji">${escapeHtml(item.emoji)}</div>
+                <div class="cuisine-explorer__label">${escapeHtml(item.label)}</div>
+                <div class="cuisine-explorer__count">${escapeHtml(t("cuisineDirectoryCount", { count: String(item.count) }))}</div>
+              </button>
+            `).join("")
+          : `<div class="cuisine-explorer__empty">${escapeHtml(t("cuisineDirectoryEmpty"))}</div>`
+      }
+    </div>
+  `;
+
+  mount.querySelector("#btnOpenCuisineDirectory")?.addEventListener("click", openCuisineDirectory);
+
+  mount.querySelectorAll("[data-cuisine]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      applyCuisineDirectoryFilter(btn.dataset.cuisine || "");
+    });
+  });
+}
+
+function renderCuisineDirectoryGrid(searchQuery = "") {
+  ensureCuisineDirectoryView();
+
+  if (!cuisineDirectoryCatalog.length) {
+    cuisineDirectoryCatalog = collectCuisineDirectoryCatalog();
+  }
+
+  const titleEl = el("cuisineDirectoryTitle");
+  const subtitleEl = el("cuisineDirectorySubtitle");
+  const closeBtn = el("btnCloseCuisineDirectory");
+  const searchInput = el("cuisineDirectorySearch");
+  const grid = el("cuisineDirectoryGrid");
+
+  if (titleEl) titleEl.textContent = t("cuisineDirectoryTitle");
+  if (subtitleEl) subtitleEl.textContent = t("cuisineDirectorySubtitle");
+  if (closeBtn) closeBtn.textContent = t("cuisineDirectoryClose");
+  if (searchInput) searchInput.placeholder = t("cuisineDirectorySearchPlaceholder");
+  if (!grid) return;
+
+  const q = normalizeText(searchQuery);
+
+  const items = cuisineDirectoryCatalog.filter(item => {
+    if (!q) return true;
+    return normalizeText(item.label).includes(q) || normalizeText(item.value).includes(q);
+  });
+
+  grid.innerHTML = items.length
+    ? items.map(item => `
+        <button
+          type="button"
+          class="cuisine-directory__card"
+          data-cuisine="${escapeHtml(item.value)}"
+          title="${escapeHtml(t("cuisineDirectoryOpen"))}"
+          style="
+            --cx-bg:${item.palette.bg};
+            --cx-soft:${item.palette.soft};
+            --cx-strong:${item.palette.strong};
+          "
+        >
+          <div class="cuisine-directory__cardTop">
+            <div class="cuisine-directory__emoji">${escapeHtml(item.emoji)}</div>
+            <div class="cuisine-directory__text">
+              <div class="cuisine-directory__name">${escapeHtml(item.label)}</div>
+              <div class="cuisine-directory__meta">${escapeHtml(t("cuisineDirectoryCount", { count: String(item.count) }))}</div>
+            </div>
+          </div>
+        </button>
+      `).join("")
+    : `<div class="cuisine-directory__empty">${escapeHtml(t("cuisineDirectoryEmpty"))}</div>`;
+
+  grid.querySelectorAll("[data-cuisine]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      applyCuisineDirectoryFilter(btn.dataset.cuisine || "");
+    });
+  });
 }
 
 // Construit les lieux depuis les lignes CSV
@@ -555,6 +1701,7 @@ function buildPlacesFromRows(rows) {
 
       cuisine_norm: cuisineMeta.cuisine_primary,
       cuisine_tokens: cuisineMeta.cuisine_tokens,
+      cuisine_groups: cuisineMeta.cuisine_groups,
       cuisine_list: cuisineMeta.cuisine_raw_list,
       cuisine_unknown: cuisineMeta.cuisine_primary === "unknown",
 
@@ -595,7 +1742,7 @@ function buildPlacesFromRows(rows) {
 function getPrefs() {
   return {
     type: el("type")?.value || "any",
-    cuisine: el("cuisine")?.value || "any",
+    cuisine: getSelectedCuisineValue(),
     budget: el("budget")?.value || "any",
     maxKm: Number(el("maxKm")?.value || DEFAULT_MAX_KM),
     veg: !!el("veg")?.checked,
@@ -613,32 +1760,51 @@ function prefsToText(p) {
   const parts = [];
 
   if (p.searchText?.trim()) {
-    parts.push(`Recherche: ${p.searchText.trim()}`);
+    parts.push(`${t("searchPrefix")}: ${p.searchText.trim()}`);
   }
 
-  parts.push(p.type === "any" ? "Type: tous" : `Type: ${typeLabel(p.type)}`);
-  parts.push(p.cuisine === "any" ? "Cuisine: —" : `Cuisine: ${cuisineLabel(p.cuisine)}`);
-  parts.push(p.budget === "any" ? "Budget: —" : `Budget: ${budgetLabel(p.budget)}`);
-  parts.push(`Distance max: ${p.maxKm} km`);
-  parts.push(`Depuis: ${getDistanceOriginLabel(p)}`);
+  parts.push(
+    p.type === "any"
+      ? `${t("typePrefix")}: ${t("allTypes")}`
+      : `${t("typePrefix")}: ${typeLabel(p.type)}`
+  );
+
+  parts.push(
+    p.cuisine === "any"
+      ? `${t("cuisinePrefix")}: ${t("anyDash")}`
+      : `${t("cuisinePrefix")}: ${cuisineLabel(p.cuisine)}`
+  );
+
+  parts.push(
+    p.budget === "any"
+      ? `${t("budgetPrefix")}: ${t("anyDash")}`
+      : `${t("budgetPrefix")}: ${budgetLabel(p.budget)}`
+  );
+
+  parts.push(`${t("distanceMaxPrefix")}: ${p.maxKm} km`);
+  parts.push(`${t("fromPrefix")}: ${getDistanceOriginLabel(p)}`);
 
   const diet = [];
-  if (p.veg) diet.push("Végétarien");
-  if (p.halal) diet.push("Halal");
-  if (p.glutenfree) diet.push("Sans gluten");
+  if (p.veg) diet.push(t("veg"));
+  if (p.halal) diet.push(t("halal"));
+  if (p.glutenfree) diet.push(t("glutenfree"));
 
-  parts.push(diet.length ? `Contraintes: ${diet.join(", ")}` : "Contraintes: —");
+  parts.push(
+    diet.length
+      ? `${t("constraintsPrefix")}: ${diet.join(", ")}`
+      : `${t("constraintsPrefix")}: ${t("constraintsNone")}`
+  );
 
-  if (p.area.trim()) parts.push(`Zone: ${p.area.trim()}`);
+  if (p.area.trim()) parts.push(`${t("areaPrefix")}: ${p.area.trim()}`);
 
   return parts.join(" | ");
 }
 
 // Placeholder thumbnails (SVG data URI)
 function placeholderDataURI(type, title) {
-  const label = (type === "hotel") ? "Hébergement" : "Restaurant";
+  const label = typeLabel(type);
   const icon = (type === "hotel") ? "🛏️" : "🍽️";
-  const t = (title || "").slice(0, 32);
+  const tTitle = (title || "").slice(0, 32);
   const bg1 = (type === "hotel") ? "#E6F6EE" : "#EAF3FF";
   const bg2 = (type === "hotel") ? "#C9EEDB" : "#D6E7FF";
 
@@ -653,10 +1819,23 @@ function placeholderDataURI(type, title) {
     <rect width="1200" height="700" fill="url(#g)"/>
     <text x="70" y="150" font-size="84" font-family="Arial" fill="#0b1220">${icon}</text>
     <text x="70" y="260" font-size="44" font-family="Arial" fill="#0b1220" font-weight="700">${escapeHtml(label)}</text>
-    <text x="70" y="340" font-size="34" font-family="Arial" fill="#2d3a4f">${escapeHtml(t)}</text>
+    <text x="70" y="340" font-size="34" font-family="Arial" fill="#2d3a4f">${escapeHtml(tTitle)}</text>
     <text x="70" y="420" font-size="26" font-family="Arial" fill="#5d6a7e">CityTaste • Ottawa</text>
   </svg>`;
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+// Enrichment cache (quartier + photo)
+const ENRICH_CACHE_KEY = "citytaste_enrich_cache_v2";
+let enrichCache = {};
+try {
+  enrichCache = JSON.parse(localStorage.getItem(ENRICH_CACHE_KEY) || "{}");
+} catch {
+  enrichCache = {};
+}
+
+function saveEnrichCache() {
+  localStorage.setItem(ENRICH_CACHE_KEY, JSON.stringify(enrichCache));
 }
 
 function getThumb(place) {
@@ -739,34 +1918,47 @@ function explain(place, prefs) {
   const ratingCount = getDisplayRatingCount(place);
 
   if (prefs.searchText?.trim() && placeMatchesSearchText(place, prefs.searchText)) {
-    reasons.push(`il correspond à votre recherche "${prefs.searchText}"`);
+    reasons.push(t("whySearchMatch", { query: prefs.searchText }));
   }
 
   if (prefs.cuisine !== "any" && placeMatchesCuisine(place, prefs.cuisine)) {
-    reasons.push(`la cuisine ${cuisineLabel(prefs.cuisine).toLowerCase()} demandée est bien respectée`);
+    reasons.push(t("whyCuisineMatch", { cuisine: cuisineLabel(prefs.cuisine).toLowerCase() }));
   }
 
   if (prefs.area.trim() && matchesArea(place, prefs.area)) {
-    reasons.push("la zone demandée correspond");
+    reasons.push(t("whyAreaMatch"));
   }
 
   if (prefs.sortBy === "distance" && distanceKm != null) {
-    reasons.push(`il fait partie des options les plus proches (${distanceKm.toFixed(1)} km depuis ${getDistanceOriginShort(prefs)})`);
+    reasons.push(t("whyDistanceTop", {
+      km: distanceKm.toFixed(1),
+      origin: getDistanceOriginShort(prefs)
+    }));
   } else if (distanceKm != null) {
-    reasons.push(`il se trouve à ${distanceKm.toFixed(1)} km depuis ${getDistanceOriginShort(prefs)}`);
+    reasons.push(t("whyDistance", {
+      km: distanceKm.toFixed(1),
+      origin: getDistanceOriginShort(prefs)
+    }));
   }
 
   if (prefs.sortBy === "rating" && ratingVal != null) {
-    reasons.push(`sa note ressort bien (${ratingVal.toFixed(1)}/5${ratingCount != null ? `, ${ratingCount} avis` : ""})`);
+    reasons.push(t("whyRatingTop", {
+      rating: ratingVal.toFixed(1),
+      count: ratingCount != null
+        ? `${currentLang === "en" ? `, ${ratingCount} reviews` : `, ${ratingCount} avis`}`
+        : ""
+    }));
   } else if (ratingVal != null && ratingVal >= 4.2) {
-    reasons.push(`sa bonne note renforce la recommandation (${ratingVal.toFixed(1)}/5)`);
+    reasons.push(t("whyRatingGood", {
+      rating: ratingVal.toFixed(1)
+    }));
   }
 
   if (!reasons.length) {
-    reasons.push("c’est l’un des meilleurs compromis entre pertinence, distance et qualité des informations disponibles");
+    reasons.push(t("whyFallback"));
   }
 
-  return `Recommandé car ${reasons.join(" et ")}.`;
+  return `${t("whyBecause")} ${reasons.join(currentLang === "en" ? " and " : " et ")}.`;
 }
 
 function hasMeaningfulFilters(prefs) {
@@ -843,7 +2035,7 @@ function computeRecommendations(prefs) {
 // Stars render
 function renderStars(rating) {
   if (rating == null || isNaN(rating)) {
-    return `<span class="rating-na">Note non disponible</span>`;
+    return `<span class="rating-na">${escapeHtml(t("noteUnavailable"))}</span>`;
   }
 
   const fullStars = Math.floor(rating);
@@ -882,21 +2074,21 @@ function renderResultsFiltered(query) {
 
   if (q) {
     list = currentResultsAll.filter(p => {
-      const hay = `${p.name} ${p.neighbourhood} ${p.city} ${p.address} ${p.cuisine_norm}`.toLowerCase();
+      const hay = `${p.name} ${p.neighbourhood} ${p.city} ${p.address} ${p.cuisine_norm} ${(p.cuisine_tokens || []).join(" ")}`.toLowerCase();
       return hay.includes(q);
     });
   }
 
-  countBadge.textContent = `${list.length} résultat${list.length > 1 ? "s" : ""}`;
+  countBadge.textContent = `${list.length} ${list.length > 1 ? t("resultsCountMany") : t("resultsCountOne")}`;
   activeFilters.textContent = prefsToText(currentPrefs || getPrefs());
   resultsSubtitle.textContent = q
-    ? `Filtré par : "${query}"`
-    : "Clique sur un lieu pour voir la fiche détaillée.";
+    ? t("filteredBy", { query })
+    : t("clickPlace");
 
   resultsEl.innerHTML = "";
 
   if (!list.length) {
-    resultsEl.innerHTML = `<div class="empty">Aucun résultat pour cette recherche.</div>`;
+    resultsEl.innerHTML = `<div class="empty">${escapeHtml(t("noResults"))}</div>`;
     return;
   }
 
@@ -905,12 +2097,14 @@ function renderResultsFiltered(query) {
       ? p.distance_km
       : computeDistanceFromPrefs(p, currentPrefs || getPrefs());
 
-    const distanceTxt = distanceKm != null ? `${distanceKm.toFixed(1)} km` : "— km";
+    const distanceTxt = distanceKm != null ? `${distanceKm.toFixed(1)} km` : `— km`;
 
     const ratingVal = getDisplayRating(p);
     const ratingCount = getDisplayRatingCount(p);
     const ratingTxt = ratingVal != null ? ratingVal.toFixed(1) : "—";
-    const ratingCountTxt = ratingCount != null ? `(${ratingCount} avis)` : "";
+    const ratingCountTxt = ratingCount != null
+      ? (currentLang === "en" ? `(${ratingCount} reviews)` : `(${ratingCount} avis)`)
+      : "";
 
     const tags = [];
     tags.push(`<span class="tag tag--green">${escapeHtml(typeLabel(p.type))}</span>`);
@@ -919,9 +2113,9 @@ function renderResultsFiltered(query) {
       tags.push(`<span class="tag">${escapeHtml(cuisineLabel(p.cuisine_norm))}</span>`);
     }
 
-    if (p.website) tags.push(`<span class="tag">Site web</span>`);
-    if (p.phone) tags.push(`<span class="tag">Téléphone</span>`);
-    if (p.opening_hours) tags.push(`<span class="tag">Horaires</span>`);
+    if (p.website) tags.push(`<span class="tag">${escapeHtml(t("tagWebsite"))}</span>`);
+    if (p.phone) tags.push(`<span class="tag">${escapeHtml(t("tagPhone"))}</span>`);
+    if (p.opening_hours) tags.push(`<span class="tag">${escapeHtml(t("tagHours"))}</span>`);
 
     const thumb = getThumb(p);
 
@@ -941,7 +2135,7 @@ function renderResultsFiltered(query) {
                 </span>
               </div>
             </div>
-            <div class="score">Score: ${p.score}</div>
+            <div class="score">${escapeHtml(t("scoreLabel"))}: ${p.score}</div>
           </div>
 
           <div class="tags">${tags.slice(0, 6).join("")}</div>
@@ -959,19 +2153,6 @@ function renderResultsFiltered(query) {
       await openDetails(id, currentPrefs || getPrefs());
     });
   });
-}
-
-// Enrichment cache (quartier + photo)
-const ENRICH_CACHE_KEY = "citytaste_enrich_cache_v2";
-let enrichCache = {};
-try {
-  enrichCache = JSON.parse(localStorage.getItem(ENRICH_CACHE_KEY) || "{}");
-} catch {
-  enrichCache = {};
-}
-
-function saveEnrichCache() {
-  localStorage.setItem(ENRICH_CACHE_KEY, JSON.stringify(enrichCache));
 }
 
 async function reverseGeocode(lat, lon) {
@@ -1062,13 +2243,13 @@ async function openDetails(placeId, prefs) {
   mSub.textContent = `${typeLabel(p.type)} • ${p.neighbourhood || p.city || "Ottawa"}`;
 
   mRating.textContent = ratingVal != null
-    ? `${ratingVal.toFixed(1)}${ratingCount != null ? ` (${ratingCount} avis)` : ""}`
-    : "Note non disponible";
+    ? `${ratingVal.toFixed(1)}${ratingCount != null ? (currentLang === "en" ? ` (${ratingCount} reviews)` : ` (${ratingCount} avis)`) : ""}`
+    : t("noteUnavailable");
 
-  mBudget.textContent = "—";
+  mBudget.textContent = t("anyDash");
   mDistance.textContent = distanceKm != null
-    ? `${distanceKm.toFixed(1)} km depuis ${getDistanceOriginShort(prefs)}`
-    : "—";
+    ? `${distanceKm.toFixed(1)} km ${currentLang === "en" ? `from ${getDistanceOriginShort(prefs)}` : `depuis ${getDistanceOriginShort(prefs)}`}`
+    : t("anyDash");
   mScore.textContent = String(score);
 
   mWhy.textContent = why;
@@ -1085,27 +2266,27 @@ async function openDetails(placeId, prefs) {
     tagList.push(cuisineLabel(p.cuisine_norm));
   }
 
-  if (p.website) tagList.push("Site web");
-  if (p.phone) tagList.push("Téléphone");
-  if (p.opening_hours) tagList.push("Horaires");
-  if (p.wheelchair) tagList.push("Accessibilité");
+  if (p.website) tagList.push(t("tagWebsite"));
+  if (p.phone) tagList.push(t("tagPhone"));
+  if (p.opening_hours) tagList.push(t("tagHours"));
+  if (p.wheelchair) tagList.push(t("tagAccessibility"));
 
-  tagList.slice(0, 10).forEach(t => {
+  tagList.slice(0, 10).forEach(tag => {
     const span = document.createElement("span");
     span.className = "tag";
-    span.textContent = t;
+    span.textContent = tag;
     mTags.appendChild(span);
   });
 
-  mAddress.textContent = p.address || "—";
-  mArea.textContent = p.neighbourhood || p.city || "—";
-  mHours.textContent = p.opening_hours || "—";
-  mPhone.textContent = p.phone || "—";
+  mAddress.textContent = p.address || t("anyDash");
+  mArea.textContent = p.neighbourhood || p.city || t("anyDash");
+  mHours.textContent = p.opening_hours || t("anyDash");
+  mPhone.textContent = p.phone || t("anyDash");
 
   if (p.website) {
     mWebsite.innerHTML = `<a href="${p.website}" target="_blank" rel="noreferrer">${escapeHtml(p.website)}</a>`;
   } else {
-    mWebsite.textContent = "—";
+    mWebsite.textContent = t("anyDash");
   }
 
   if (p.lat != null && p.lon != null) {
@@ -1139,7 +2320,7 @@ function quickExplore(query) {
 
   const q = (query || "").trim();
   if (!q) {
-    setInlineMessage(quickSearchFeedback, "Entre au moins un mot-clé avant de cliquer sur Explorer.");
+    setInlineMessage(quickSearchFeedback, t("quickSearchEmpty"));
     quickSearch?.focus();
     return;
   }
@@ -1173,13 +2354,13 @@ function recommend() {
   const prefs = getPrefs();
 
   if (!hasMeaningfulFilters(prefs)) {
-    setInlineMessage(filtersFeedback, "Ajoute au moins une contrainte avant de demander des recommandations.");
+    setInlineMessage(filtersFeedback, t("filtersEmpty"));
     showFilters();
     return;
   }
 
   if (prefs.distanceMode === "user" && !hasUserLocation()) {
-    setInlineMessage(filtersFeedback, "Active d’abord votre position ou repasse au centre d’Ottawa.");
+    setInlineMessage(filtersFeedback, t("locationNeeded"));
     showFilters();
     return;
   }
@@ -1191,7 +2372,7 @@ function recommend() {
 
 function resetForm() {
   if (el("type")) el("type").value = "any";
-  if (el("cuisine")) el("cuisine").value = "any";
+  setSelectedCuisineValue("any", true);
   if (el("budget")) el("budget").value = "any";
   if (el("maxKm")) el("maxKm").value = DEFAULT_MAX_KM;
   if (el("veg")) el("veg").checked = false;
@@ -1201,12 +2382,15 @@ function resetForm() {
   if (el("topN")) el("topN").value = 12;
   if (el("sortBy")) el("sortBy").value = "score";
 
+  if (cuisineInput) cuisineInput.value = "";
+  hideCuisineSuggestions();
+
   if (distanceModeCenter) distanceModeCenter.checked = true;
   if (distanceModeUser) distanceModeUser.checked = false;
 
   locationState.mode = "center";
   clearInlineMessages();
-  updateLocationStatus("Distance calculée depuis le centre d’Ottawa.");
+  updateLocationStatus(t("locationCenterMsg"));
 }
 
 function rerunCurrentResults() {
@@ -1228,9 +2412,207 @@ function rerunCurrentResults() {
   setResults(list, nextPrefs);
 }
 
+function updateLanguageUI() {
+  document.documentElement.lang = currentLang;
+  updateLanguageButtons();
+
+  if (btnNavHome) btnNavHome.textContent = t("navHome");
+  if (btnNavFilters) btnNavFilters.textContent = t("navFilters");
+
+  const homeTitle = document.querySelector(".homeContent h1");
+  const homeIntro = document.querySelector(".homeContent p");
+  if (homeTitle) homeTitle.textContent = t("heroTitle");
+  if (homeIntro) homeIntro.textContent = t("heroText");
+
+  if (quickSearch) quickSearch.placeholder = t("quickSearchPlaceholder");
+  if (btnExplore) btnExplore.textContent = t("explore");
+  if (btnAdvanced) btnAdvanced.textContent = t("advancedFilters");
+
+  const statLabels = document.querySelectorAll(".homeStats .stat__label");
+  if (statLabels[0]) statLabels[0].textContent = t("dataStatusLabel");
+  if (statLabels[1]) statLabels[1].textContent = t("dataCountLabel");
+  if (statLabels[2]) statLabels[2].textContent = t("dataSourceLabel");
+
+  const filtersTitle = document.querySelector("#builderView .filters h2");
+  if (filtersTitle) filtersTitle.textContent = t("preferences");
+
+  const typeLabelEl = document.querySelector('label[for="type"]');
+  const cuisineLabelEl = document.querySelector('label[for="cuisineInput"]');
+  const budgetLabelEl = document.querySelector('label[for="budget"]');
+  const maxKmLabelEl = document.querySelector('label[for="maxKm"]');
+  const areaLabelEl = document.querySelector('label[for="area"]');
+  const topNLabelEl = document.querySelector('label[for="topN"]');
+  const sortByLabelEl = document.querySelector('label[for="sortBy"]');
+
+  if (typeLabelEl) typeLabelEl.textContent = t("placeType");
+  if (cuisineLabelEl) cuisineLabelEl.textContent = t("cuisineCategory");
+  if (budgetLabelEl) budgetLabelEl.textContent = t("budget");
+  if (maxKmLabelEl) maxKmLabelEl.textContent = t("maxDistance");
+  if (areaLabelEl) areaLabelEl.textContent = t("area");
+  if (topNLabelEl) topNLabelEl.textContent = t("topN");
+  if (sortByLabelEl) sortByLabelEl.textContent = t("sortBy");
+
+  const typeSelect = el("type");
+  if (typeSelect) {
+    if (typeSelect.options[0]) typeSelect.options[0].text = t("typeAny");
+    if (typeSelect.options[1]) typeSelect.options[1].text = t("typeRestaurant");
+    if (typeSelect.options[2]) typeSelect.options[2].text = t("typeHotel");
+  }
+
+  const budgetSelect = el("budget");
+  if (budgetSelect) {
+    if (budgetSelect.options[0]) budgetSelect.options[0].text = t("budgetAny");
+    if (budgetSelect.options[1]) budgetSelect.options[1].text = t("budgetLow");
+    if (budgetSelect.options[2]) budgetSelect.options[2].text = t("budgetMid");
+    if (budgetSelect.options[3]) budgetSelect.options[3].text = t("budgetHigh");
+  }
+
+  const sortSelect = el("sortBy");
+  if (sortSelect) {
+    if (sortSelect.options[0]) sortSelect.options[0].text = t("sortScore");
+    if (sortSelect.options[1]) sortSelect.options[1].text = t("sortRating");
+    if (sortSelect.options[2]) sortSelect.options[2].text = t("sortDistance");
+  }
+
+  if (cuisineInput) cuisineInput.placeholder = t("cuisinePlaceholder");
+  const cuisineHint = document.querySelector("#cuisineAutocomplete + .hint");
+  if (cuisineHint) cuisineHint.textContent = t("cuisineHint");
+
+  const distanceField = distanceModeCenter?.closest(".field");
+  const distanceFieldLabel = distanceField
+    ? Array.from(distanceField.children).find(child => child.tagName === "LABEL")
+    : null;
+  if (distanceFieldLabel) distanceFieldLabel.textContent = t("distanceSource");
+
+  if (distanceModeCenter?.parentElement) setControlText(distanceModeCenter.parentElement, t("ottawaCenter"));
+  if (distanceModeUser?.parentElement) setControlText(distanceModeUser.parentElement, t("myLocation"));
+  if (btnUseMyLocation) btnUseMyLocation.textContent = t("activateLocation");
+
+  const dietaryField = el("veg")?.closest(".field");
+  const dietaryFieldLabel = dietaryField
+    ? Array.from(dietaryField.children).find(child => child.tagName === "LABEL")
+    : null;
+  if (dietaryFieldLabel) dietaryFieldLabel.textContent = t("dietary");
+
+  if (el("veg")?.parentElement) setControlText(el("veg").parentElement, t("veg"));
+  if (el("halal")?.parentElement) setControlText(el("halal").parentElement, t("halal"));
+  if (el("glutenfree")?.parentElement) setControlText(el("glutenfree").parentElement, t("glutenfree"));
+
+  if (el("area")) el("area").placeholder = t("areaPlaceholder");
+  const areaHint = areaLabelEl?.parentElement?.querySelector(".hint");
+  if (areaHint) areaHint.textContent = t("areaHint");
+
+  if (btnReco) btnReco.textContent = t("recommend");
+  if (btnReset) btnReset.textContent = t("reset");
+
+  const sideText = document.querySelector(".side__content .muted");
+  if (sideText) sideText.textContent = t("sideText");
+
+  const miniLabels = document.querySelectorAll(".side__kpis .mini__label");
+  if (miniLabels[0]) miniLabels[0].textContent = t("places");
+  if (miniLabels[1]) miniLabels[1].textContent = t("restaurants");
+  if (miniLabels[2]) miniLabels[2].textContent = t("hotels");
+
+  const resultsTitle = document.querySelector("#resultsView h2");
+  if (resultsTitle) resultsTitle.textContent = t("results");
+
+  if (btnBackToFilters) btnBackToFilters.textContent = t("backFilters");
+  if (btnBackToHome) btnBackToHome.textContent = t("backHome");
+  if (resultsSearch) resultsSearch.placeholder = t("resultsSearchPlaceholder");
+  if (btnClearResultsSearch) btnClearResultsSearch.textContent = t("clear");
+
+  const modalKpiLabels = document.querySelectorAll(".modal .kpi__label");
+  if (modalKpiLabels[0]) modalKpiLabels[0].textContent = t("modalRatingLabel");
+  if (modalKpiLabels[1]) modalKpiLabels[1].textContent = t("modalBudgetLabel");
+  if (modalKpiLabels[2]) modalKpiLabels[2].textContent = t("modalDistanceLabel");
+  if (modalKpiLabels[3]) modalKpiLabels[3].textContent = t("modalScoreLabel");
+
+  const sectionTitles = document.querySelectorAll(".modal .sectionTitle");
+  if (sectionTitles[0]) sectionTitles[0].textContent = t("modalTags");
+  if (sectionTitles[1]) sectionTitles[1].textContent = t("modalWhy");
+  if (sectionTitles[2]) sectionTitles[2].textContent = t("modalInfo");
+
+  const infoRowTitles = document.querySelectorAll(".infoRow span:first-child");
+  if (infoRowTitles[0]) infoRowTitles[0].textContent = t("address");
+  if (infoRowTitles[1]) infoRowTitles[1].textContent = t("neighbourhood");
+  if (infoRowTitles[2]) infoRowTitles[2].textContent = t("hours");
+  if (infoRowTitles[3]) infoRowTitles[3].textContent = t("phone");
+  if (infoRowTitles[4]) infoRowTitles[4].textContent = t("website");
+
+  if (mMaps) mMaps.textContent = t("openMaps");
+
+  const currentCuisine = getSelectedCuisineValue();
+  if (cuisineInput && currentCuisine !== "any" && cuisineHidden) {
+    setSelectedCuisineValue(currentCuisine, true);
+  }
+
+  if (quickSearchFeedback?.textContent) {
+    if (
+      quickSearchFeedback.textContent.includes("mot-clé") ||
+      quickSearchFeedback.textContent.includes("keyword")
+    ) {
+      setInlineMessage(quickSearchFeedback, t("quickSearchEmpty"));
+    }
+  }
+
+  if (filtersFeedback?.textContent) {
+    if (
+      filtersFeedback.textContent.includes("contrainte") ||
+      filtersFeedback.textContent.includes("constraint")
+    ) {
+      setInlineMessage(filtersFeedback, t("filtersEmpty"));
+    } else if (
+      filtersFeedback.textContent.includes("position") ||
+      filtersFeedback.textContent.includes("location")
+    ) {
+      setInlineMessage(filtersFeedback, t("locationNeeded"));
+    }
+  }
+
+  if (locationStatus) {
+    const msg = locationStatus.textContent;
+    if (
+      msg.includes("centre d’Ottawa") ||
+      msg.includes("Ottawa center")
+    ) {
+      if (distanceModeUser?.checked && hasUserLocation()) {
+        updateLocationStatus(t("locationUserMsg"));
+      } else {
+        updateLocationStatus(t("locationCenterMsg"));
+      }
+    }
+  }
+
+  if (dataStatus) {
+    if (dataStatus.textContent === "Chargement…" || dataStatus.textContent === "Loading…") {
+      dataStatus.textContent = t("statusLoading");
+    } else if (dataStatus.textContent === "OK") {
+      dataStatus.textContent = t("statusOk");
+    } else if (dataStatus.textContent === "Erreur" || dataStatus.textContent === "Error") {
+      dataStatus.textContent = t("statusError");
+    }
+  }
+
+  updateChatbotLanguageUI();
+
+  if (currentPrefs) {
+    activeFilters.textContent = prefsToText(currentPrefs);
+    renderResultsFiltered(resultsSearch?.value || "");
+  }
+
+  renderCuisineExplorerCards();
+
+  if (el("cuisineDirectoryView")?.classList.contains("is-open")) {
+    renderCuisineDirectoryGrid(el("cuisineDirectorySearch")?.value || "");
+  }
+}
+
 // Events
 btnNavHome?.addEventListener("click", showHome);
 btnNavFilters?.addEventListener("click", showFilters);
+
+btnLangFr?.addEventListener("click", () => setLanguage("fr"));
+btnLangEn?.addEventListener("click", () => setLanguage("en"));
 
 btnAdvanced?.addEventListener("click", showFilters);
 btnExplore?.addEventListener("click", () => quickExplore(quickSearch?.value || ""));
@@ -1262,7 +2644,8 @@ distanceModeCenter?.addEventListener("change", () => {
   if (!distanceModeCenter.checked) return;
   locationState.mode = "center";
   clearInlineMessages();
-  updateLocationStatus("Distance calculée depuis le centre d’Ottawa.");
+  updateLocationStatus(t("locationCenterMsg"));
+  rerunCurrentResults();
 });
 
 distanceModeUser?.addEventListener("change", async () => {
@@ -1272,16 +2655,13 @@ distanceModeUser?.addEventListener("change", async () => {
   clearInlineMessages();
 
   if (hasUserLocation()) {
-    updateLocationStatus("Distance calculée depuis votre position actuelle.");
+    updateLocationStatus(t("locationUserMsg"));
+    rerunCurrentResults();
     return;
   }
 
-  await requestUserLocation();
-});
-
-btnUseMyLocation?.addEventListener("click", async () => {
-  clearInlineMessages();
-  await requestUserLocation();
+  const ok = await requestUserLocation();
+  if (ok) rerunCurrentResults();
 });
 
 btnUseMyLocation?.addEventListener("click", async () => {
@@ -1290,11 +2670,242 @@ btnUseMyLocation?.addEventListener("click", async () => {
   if (ok) rerunCurrentResults();
 });
 
+/* =========================
+   CITYTASTE CHATBOT
+========================= */
+
+const CHATBOT_API_URL =
+  window.location.port === "5500"
+    ? "http://127.0.0.1:8000/api/chat"
+    : "/api/chat";
+
+const chatbotToggle = el("chatbotToggle");
+const chatbotPanel = el("chatbotPanel");
+const chatbotClose = el("chatbotClose");
+const chatbotMessages = el("chatbotMessages");
+const chatbotInput = el("chatbotInput");
+const chatbotSend = el("chatbotSend");
+const chatbotTitle = el("chatbotTitle");
+const chatbotSubtitle = el("chatbotSubtitle");
+const chatbotWelcomeMessage = el("chatbotWelcomeMessage");
+const chatbotSuggestions = el("chatbotSuggestions");
+
+const chatbotI18n = {
+  fr: {
+    title: "Assistant CityTaste",
+    subtitle: "Pose une question sur le site ou les résultats",
+    welcome:
+      "Bonjour 👋 Je peux t’aider à utiliser CityTaste, comprendre les filtres et mieux lire les résultats.",
+    placeholder: "Écris ta question...",
+    send: "Envoyer",
+    openLabel: "Ouvrir l’assistant CityTaste",
+    closeLabel: "Fermer l’assistant",
+    thinking: "CityTaste écrit…",
+    error:
+      "Je n’arrive pas à joindre l’assistant pour le moment. Vérifie que le backend FastAPI est bien lancé.",
+    empty:
+      "Écris une question avant d’envoyer le message.",
+    suggestions: [
+      "Comment utiliser les filtres ?",
+      "Comment activer ma position ?",
+      "comment les résultats sont classés ?"
+    ]
+  },
+  en: {
+    title: "CityTaste Assistant",
+    subtitle: "Ask a question about the site or the results",
+    welcome:
+      "Hello 👋 I can help you use CityTaste, understand the filters, and better read the results.",
+    placeholder: "Write your question...",
+    send: "Send",
+    openLabel: "Open the CityTaste assistant",
+    closeLabel: "Close the assistant",
+    thinking: "CityTaste is typing…",
+    error:
+      "I can’t reach the assistant right now. Make sure the FastAPI backend is running.",
+    empty:
+      "Write a question before sending your message.",
+    suggestions: [
+      "How do I use filters?",
+      "How do I enable my location?",
+      "How are the results ranked?"
+    ]
+  }
+};
+
+function getChatbotText() {
+  return chatbotI18n[currentLang] || chatbotI18n.fr;
+}
+
+function openChatbot() {
+  if (!chatbotPanel) return;
+  chatbotPanel.classList.remove("hidden");
+  chatbotInput?.focus();
+}
+
+function closeChatbot() {
+  chatbotPanel?.classList.add("hidden");
+}
+
+function autoResizeChatbotInput() {
+  if (!chatbotInput) return;
+  chatbotInput.style.height = "auto";
+  chatbotInput.style.height = `${Math.min(chatbotInput.scrollHeight, 120)}px`;
+}
+
+function appendChatbotMessage(text, sender = "bot", extraClass = "") {
+  if (!chatbotMessages) return null;
+
+  const msg = document.createElement("div");
+  msg.className = `chatbot-message ${sender} ${extraClass}`.trim();
+  msg.textContent = text;
+  chatbotMessages.appendChild(msg);
+  chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+  return msg;
+}
+
+function getVisibleResultNames() {
+  if (!Array.isArray(currentResultsAll) || !currentResultsAll.length) return [];
+  return currentResultsAll.slice(0, 5).map(p => p.name).filter(Boolean);
+}
+
+function getCurrentViewName() {
+  if (resultsView && !resultsView.classList.contains("hidden")) return "results";
+  if (builderView && !builderView.classList.contains("hidden")) return "filters";
+  return "home";
+}
+
+function buildChatbotContext() {
+  return {
+    ui_language: currentLang,
+    current_view: getCurrentViewName(),
+    prefs: currentPrefs || getPrefs(),
+    visible_results: getVisibleResultNames(),
+    location: {
+      mode: locationState.mode,
+      has_user_coords: hasUserLocation()
+    }
+  };
+}
+
+async function sendChatbotMessage(prefilledText = null) {
+  const ui = getChatbotText();
+  const text = String(prefilledText ?? chatbotInput?.value ?? "").trim();
+
+  if (!text) {
+    appendChatbotMessage(ui.empty, "bot");
+    return;
+  }
+
+  appendChatbotMessage(text, "user");
+
+  if (chatbotInput) {
+    chatbotInput.value = "";
+    autoResizeChatbotInput();
+  }
+
+  if (chatbotSend) chatbotSend.disabled = true;
+
+  const typingNode = appendChatbotMessage(ui.thinking, "bot", "typing");
+
+  try {
+    const response = await fetch(CHATBOT_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        message: text,
+        context: buildChatbotContext()
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (typingNode) typingNode.remove();
+
+    const answer =
+      data?.answer ||
+      data?.message ||
+      (currentLang === "en"
+        ? "Sorry, I could not generate a response."
+        : "Désolé, je n’ai pas pu générer une réponse.");
+
+    appendChatbotMessage(answer, "bot");
+  } catch (err) {
+    console.error("Chatbot error:", err);
+
+    if (typingNode) typingNode.remove();
+    appendChatbotMessage(ui.error, "bot");
+  } finally {
+    if (chatbotSend) chatbotSend.disabled = false;
+  }
+}
+
+function renderChatbotSuggestions() {
+  if (!chatbotSuggestions) return;
+
+  const ui = getChatbotText();
+  chatbotSuggestions.innerHTML = ui.suggestions
+    .map(
+      (label) => `<button class="chatbot-chip" type="button">${escapeHtml(label)}</button>`
+    )
+    .join("");
+
+  chatbotSuggestions.querySelectorAll(".chatbot-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      sendChatbotMessage(btn.textContent || "");
+    });
+  });
+}
+
+function updateChatbotLanguageUI() {
+  const ui = getChatbotText();
+
+  if (chatbotTitle) chatbotTitle.textContent = ui.title;
+  if (chatbotSubtitle) chatbotSubtitle.textContent = ui.subtitle;
+  if (chatbotWelcomeMessage) chatbotWelcomeMessage.textContent = ui.welcome;
+  if (chatbotInput) chatbotInput.placeholder = ui.placeholder;
+  if (chatbotSend) chatbotSend.textContent = ui.send;
+
+  if (chatbotToggle) {
+    chatbotToggle.setAttribute("aria-label", ui.openLabel);
+    chatbotToggle.setAttribute("title", ui.title);
+  }
+
+  if (chatbotClose) {
+    chatbotClose.setAttribute("aria-label", ui.closeLabel);
+    chatbotClose.setAttribute("title", ui.closeLabel);
+  }
+
+  renderChatbotSuggestions();
+}
+
+chatbotToggle?.addEventListener("click", openChatbot);
+chatbotClose?.addEventListener("click", closeChatbot);
+
+chatbotSend?.addEventListener("click", () => {
+  sendChatbotMessage();
+});
+
+chatbotInput?.addEventListener("input", autoResizeChatbotInput);
+
+chatbotInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendChatbotMessage();
+  }
+});
+
 // Init (load data)
 (async function init() {
   try {
     if (btnReco) btnReco.disabled = true;
-    if (dataStatus) dataStatus.textContent = "Chargement…";
+    if (dataStatus) dataStatus.textContent = t("statusLoading");
     if (dataNote) {
       dataNote.style.display = "none";
       dataNote.textContent = "";
@@ -1303,12 +2914,13 @@ btnUseMyLocation?.addEventListener("click", async () => {
     const csvText = await loadCSV();
     const rows = parseCSV(csvText);
     PLACES = buildPlacesFromRows(rows);
+    initCuisineAutocomplete();
 
     const nAll = PLACES.length;
     const nRest = PLACES.filter(p => p.type === "restaurant").length;
     const nHot = PLACES.filter(p => p.type === "hotel").length;
 
-    if (dataStatus) dataStatus.textContent = "OK";
+    if (dataStatus) dataStatus.textContent = t("statusOk");
     if (dataCount) dataCount.textContent = String(nAll);
 
     if (kpiPlaces) kpiPlaces.textContent = String(nAll);
@@ -1317,16 +2929,18 @@ btnUseMyLocation?.addEventListener("click", async () => {
 
     if (btnReco) btnReco.disabled = false;
 
-    updateLocationStatus("Distance calculée depuis le centre d’Ottawa.");
+    updateLocationStatus(t("locationCenterMsg"));
+    updateLanguageUI();
     showHome();
   } catch (err) {
-    if (dataStatus) dataStatus.textContent = "Erreur";
+    if (dataStatus) dataStatus.textContent = t("statusError");
     if (dataCount) dataCount.textContent = "—";
     if (dataNote) {
       dataNote.style.display = "block";
       dataNote.textContent = String(err.message || err);
     }
     if (btnReco) btnReco.disabled = true;
+    updateLanguageUI();
     showHome();
   }
 })();

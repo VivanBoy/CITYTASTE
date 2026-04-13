@@ -96,6 +96,23 @@ def search_places(
         params.append(min_rating)
 
     if keyword:
+        kw_clean = keyword.lower().strip()
+
+        generic_center_terms = {
+            "downtown",
+            "centre",
+            "center",
+            "centre ottawa",
+            "center ottawa",
+            "centre-ville",
+            "centreville",
+            "centre ville",
+            "downtown ottawa"
+    }
+
+    # Si le mot-clé désigne simplement le centre,
+    # on laisse dist_to_center_km faire le travail.
+    if kw_clean not in generic_center_terms:
         sql += """
         AND (
             LOWER(COALESCE(name, '')) LIKE LOWER(?)
@@ -106,7 +123,7 @@ def search_places(
             OR LOWER(COALESCE(tourism, '')) LIKE LOWER(?)
         )
         """
-        kw = f"%{keyword}%"
+        kw = f"%{kw_clean}%"
         params.extend([kw, kw, kw, kw, kw, kw])
 
     if max_distance_km is not None:

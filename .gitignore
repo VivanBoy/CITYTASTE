@@ -3,40 +3,44 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Environments
+# Virtual environments
 venv/
 env/
 .venv/
 ENV/
+.venv_broken/
+**/.venv/
+**/venv/
+**/env/
 
-# JetBrains
+# IDE
 .idea/
-
-# VS Code
 .vscode/
+.vs/
 
 # Jupyter
 .ipynb_checkpoints/
 *.nbconvert.ipynb
+**/.ipynb_checkpoints/
 
-# macOS
+# OS files
 .DS_Store
-
-# Windows
 Thumbs.db
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # MLflow
 mlruns/
+**/mlruns/
+.trash/
 
-# Data / caches
-*.sqlite
-*.db
-
-# Model artifacts
-*.joblib
-*.pkl
-
-# Log files
+# Logs
 logs/
 *.log
 
@@ -44,14 +48,70 @@ logs/
 *.tmp
 *.temp
 
-# Ignore local secrets/config files
-*.env
+# Build / distribution
+dist/
+build/
+
+# Local databases / caches
+*.sqlite
+*.sqlite3
+*.db
+
+# Model artifacts
+*.joblib
+*.pkl
+*.npy
+*.npz
+*.pt
+*.pth
+*.bin
+*.onnx
+*.gguf
+*.safetensors
+
+# Secrets / local config
+.env
 .env.*
+*.env
+!.env.example
+secrets/
+*.key
+*.pem
+credentials.json
+service_account.json
 
-# Ignore notebook output and checkpoints (optionnel)
-**/*.ipynb_checkpoints
+# Optional local notebooks not meant for GitHub
+data_google.ipynb
 
-# Exported release archives
+# Archives
 *.zip
 *.tar.gz
 *.egg
+
+# DVC local cache/config only
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+
+# Machine/local duplicate files
+*-DESKTOP-*.js
+*-DESKTOP-*.css
+
+# ---- CityTaste / Assistant_IA specific ----
+
+# Local LLM models
+Assistant_IA/models/
+
+# Generated RAG index
+Assistant_IA/data/site_rag_index/
+
+# Local DB used by assistant
+Assistant_IA/data/citytaste_ottawa.db
+
+# Nested local virtual env inside assistant data
+Assistant_IA/data/.venv/
+
+# Optional generated data folders if local/private
+data/raw/
+data/private/
+data/secrets/

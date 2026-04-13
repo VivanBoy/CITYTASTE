@@ -16,6 +16,11 @@
     </div>
 
     <nav class="topbar__right">
+      <div class="langSwitch">
+        <button class="btn btn--ghost" id="btnLangFr" type="button">FR</button>
+        <button class="btn btn--ghost" id="btnLangEn" type="button">EN</button>
+      </div>
+
       <button class="btn btn--ghost" id="btnNavHome" type="button">Accueil</button>
       <button class="btn btn--ghost" id="btnNavFilters" type="button">Filtres</button>
     </nav>
@@ -81,16 +86,22 @@
       </div>
 
       <div class="field">
-        <label for="cuisine">Cuisine / Catégorie</label>
-        <select id="cuisine">
-          <option value="any">Peu importe</option>
-          <option value="italian">Italien</option>
-          <option value="indian">Indien</option>
-          <option value="asian">Asiatique</option>
-          <option value="african">Africain</option>
-          <option value="canadian">Canadien</option>
-          <option value="cafe">Café / Brunch</option>
-        </select>
+        <label for="cuisineInput">Cuisine / Catégorie</label>
+
+        <div class="autocomplete" id="cuisineAutocomplete">
+          <input id="cuisine" type="hidden" value="any" />
+
+          <input
+            id="cuisineInput"
+            type="text"
+            placeholder="Ex: jap, thai, pizza, ethi..."
+            autocomplete="off"
+          />
+
+          <div id="cuisineSuggestions" class="autocomplete__list hidden"></div>
+        </div>
+
+        <div class="hint">Tape quelques lettres, puis clique sur la suggestion.</div>
       </div>
 
       <div class="grid2">
@@ -289,6 +300,65 @@
       </div>
     </div>
   </div>
+
+  <!-- CHATBOT -->
+  <button
+    id="chatbotToggle"
+    class="chatbot-toggle"
+    type="button"
+    aria-label="Ouvrir l’assistant CityTaste"
+    title="Assistant CityTaste"
+  >
+    💬
+  </button>
+
+  <section
+    id="chatbotPanel"
+    class="chatbot-panel hidden"
+    aria-label="Assistant CityTaste"
+  >
+    <div class="chatbot-header">
+      <div class="chatbot-header__text">
+        <h3 id="chatbotTitle">Assistant CityTaste</h3>
+        <p id="chatbotSubtitle">Pose une question sur le site ou les résultats</p>
+      </div>
+
+      <button
+        id="chatbotClose"
+        class="chatbot-close"
+        type="button"
+        aria-label="Fermer l’assistant"
+        title="Fermer"
+      >
+        ✕
+      </button>
+    </div>
+
+    <div id="chatbotMessages" class="chatbot-messages" aria-live="polite">
+      <div class="chatbot-message bot" id="chatbotWelcomeMessage">
+        Bonjour 👋 Je peux t’aider à utiliser CityTaste, comprendre les filtres et mieux lire les résultats.
+      </div>
+    </div>
+
+    <div class="chatbot-suggestions" id="chatbotSuggestions">
+      <button class="chatbot-chip" type="button">Comment utiliser les filtres ?</button>
+      <button class="chatbot-chip" type="button">Comment activer ma position ?</button>
+      <button class="chatbot-chip" type="button">Pourquoi ce lieu est recommandé ?</button>
+    </div>
+
+    <div class="chatbot-input-wrap">
+      <textarea
+        id="chatbotInput"
+        class="chatbot-input"
+        rows="1"
+        placeholder="Écris ta question..."
+      ></textarea>
+
+      <button id="chatbotSend" class="chatbot-send" type="button">
+        Envoyer
+      </button>
+    </div>
+  </section>
 
   <script src="app.js"></script>
 </body>
