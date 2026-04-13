@@ -2674,10 +2674,7 @@ btnUseMyLocation?.addEventListener("click", async () => {
    CITYTASTE CHATBOT
 ========================= */
 
-const CHATBOT_API_URL =
-  window.location.port === "5500"
-    ? "http://127.0.0.1:8000/api/chat"
-    : "/api/chat";
+const CHATBOT_API_URL = "http://127.0.0.1:8000/api/chat";
 
 const chatbotToggle = el("chatbotToggle");
 const chatbotPanel = el("chatbotPanel");
