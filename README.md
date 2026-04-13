@@ -323,6 +323,7 @@ Possible next steps for the project include:
 ## Author
 
 **Innocent Niyobuhungiro**  
+**Japhet Bonheur Beda Valeria**
 Artificial Intelligence Program  
 La Cité Collégiale  
 Ottawa, Canada
