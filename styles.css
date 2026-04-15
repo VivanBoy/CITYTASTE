@@ -1185,3 +1185,83 @@ body.cuisine-directory-open {
     font-size: 1.6rem;
   }
 }
+
+/* =========================
+   COMING SOON + DISABLED FILTERS
+========================= */
+
+.soonBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff4e5;
+  color: #b54708;
+  border: 1px solid #f7d7a3;
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.field--comingSoon {
+  padding: 12px;
+  border: 1px dashed #d6dee8;
+  border-radius: 16px;
+  background: #fcfcfd;
+}
+
+.field--comingSoon select:disabled,
+.field--comingSoon input:disabled {
+  background: #f8fafc;
+  color: #98a2b3;
+  border-color: #e5e7eb;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.chip--disabled {
+  background: #f8fafc;
+  color: #98a2b3;
+  border-color: #e5e7eb;
+  cursor: not-allowed;
+}
+
+.chip--disabled input {
+  cursor: not-allowed;
+}
+
+.filters .field.is-disabled {
+  opacity: 0.72;
+}
+
+.filters .field.is-disabled input,
+.filters .field.is-disabled select,
+.filters .field.is-disabled textarea {
+  background: #f8fafc;
+  color: #98a2b3;
+  border-color: #e5e7eb;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.filters .field.is-disabled input:focus,
+.filters .field.is-disabled select:focus,
+.filters .field.is-disabled textarea:focus {
+  border-color: #e5e7eb;
+  box-shadow: none;
+}
+
+.filters .field.is-disabled .hint {
+  color: #98a2b3;
+}
+
+.filters .field.is-disabled .autocomplete__list {
+  display: none !important;
+}
+
+.filters .field.is-disabled label {
+  color: #667085;
+}

@@ -85,6 +85,7 @@
         </select>
       </div>
 
+      <!-- CUISINE AUTOCOMPLETE -->
       <div class="field">
         <label for="cuisineInput">Cuisine / Catégorie</label>
 
@@ -105,14 +106,23 @@
       </div>
 
       <div class="grid2">
-        <div class="field">
-          <label for="budget">Budget</label>
-          <select id="budget">
-            <option value="any">Peu importe</option>
+        <!-- BUDGET: COMING SOON -->
+        <div class="field field--comingSoon">
+          <label for="budget">
+            Budget
+            <span class="soonBadge" id="budgetSoonBadge">Bientôt disponible</span>
+          </label>
+
+          <select id="budget" disabled>
+            <option value="any" selected>Peu importe</option>
             <option value="low">$ (économique)</option>
             <option value="mid">$$ (moyen)</option>
             <option value="high">$$$ (élevé)</option>
           </select>
+
+          <div class="hint" id="budgetHint">
+            Ce filtre sera ajouté dans une prochaine version.
+          </div>
         </div>
 
         <div class="field">
@@ -143,19 +153,55 @@
         <div class="hint" id="locationStatus">Distance calculée depuis le centre d’Ottawa.</div>
       </div>
 
-      <div class="field">
-        <label>Contraintes alimentaires</label>
+      <!-- DIETARY: COMING SOON -->
+      <div class="field field--comingSoon">
+        <label>
+          Contraintes alimentaires
+          <span class="soonBadge" id="dietSoonBadge">Bientôt disponible</span>
+        </label>
+
         <div class="chips">
-          <label class="chip"><input type="checkbox" id="veg" /> Végétarien</label>
-          <label class="chip"><input type="checkbox" id="halal" /> Halal</label>
-          <label class="chip"><input type="checkbox" id="glutenfree" /> Sans gluten</label>
+          <label class="chip chip--disabled">
+            <input type="checkbox" id="veg" disabled />
+            Végétarien
+          </label>
+
+          <label class="chip chip--disabled">
+            <input type="checkbox" id="halal" disabled />
+            Halal
+          </label>
+
+          <label class="chip chip--disabled">
+            <input type="checkbox" id="glutenfree" disabled />
+            Sans gluten
+          </label>
+        </div>
+
+        <div class="hint" id="dietHint">
+          Ces filtres seront ajoutés lorsqu’un jeu de données fiable sera disponible.
         </div>
       </div>
 
+      <!-- AREA / ZONE AUTOCOMPLETE -->
       <div class="field">
-        <label for="area">Zone (optionnel)</label>
-        <input id="area" placeholder="Ex: St Laurent, Centretown, Vanier..." />
-        <div class="hint">La zone est utilisée comme mot-clé (quartier/adresse).</div>
+        <label for="areaInput">Zone / Quartier (optionnel)</label>
+
+        <div class="autocomplete" id="areaAutocomplete">
+          <input id="area" type="hidden" value="" />
+
+          <input
+            id="areaInput"
+            type="text"
+            placeholder="Ex: Downtown, Centre-ville, St-Laurent, Vanier..."
+            autocomplete="off"
+          />
+
+          <div id="areaSuggestions" class="autocomplete__list hidden"></div>
+        </div>
+
+        <div class="hint">
+          Tape quelques lettres, puis clique sur une suggestion.
+        </div>
       </div>
 
       <div class="grid2">
@@ -262,7 +308,7 @@
             </div>
             <div class="kpi">
               <div class="kpi__label">Budget</div>
-              <div class="kpi__value" id="mBudget">—</div>
+              <div class="kpi__value" id="mBudget">Bientôt disponible</div>
             </div>
             <div class="kpi">
               <div class="kpi__label">Distance</div>
