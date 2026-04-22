@@ -3092,7 +3092,7 @@ btnUseMyLocation?.addEventListener("click", async () => {
    CITYTASTE CHATBOT
 ========================= */
 
-const CHATBOT_API_URL = "http://127.0.0.1:8000/api/chat";
+const CHATBOT_API_URL = "/api/chat";
 
 const chatbotToggle = el("chatbotToggle");
 const chatbotPanel = el("chatbotPanel");
@@ -3117,7 +3117,7 @@ const chatbotI18n = {
     closeLabel: "Fermer l’assistant",
     thinking: "CityTaste écrit…",
     error:
-      "Je n’arrive pas à joindre l’assistant pour le moment. Vérifie que le backend FastAPI est bien lancé.",
+      "Je n’arrive pas à joindre l’assistant pour le moment. Vérifie que le service de l’assistant est disponible.",
     empty:
       "Écris une question avant d’envoyer le message.",
     suggestions: [
@@ -3137,7 +3137,7 @@ const chatbotI18n = {
     closeLabel: "Close the assistant",
     thinking: "CityTaste is typing…",
     error:
-      "I can’t reach the assistant right now. Make sure the FastAPI backend is running.",
+      "I can’t reach the assistant right now. Make sure the assistant service is available.",
     empty:
       "Write a question before sending the message.",
     suggestions: [
