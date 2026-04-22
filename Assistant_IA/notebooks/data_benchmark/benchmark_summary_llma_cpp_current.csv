@@ -1,0 +1,2 @@
+model,avg_latency_sec,avg_keyword_score,language_match_rate,no_prototype_rate,avg_auto_score_100
+llma_cpp_current,14.354856774999917,0.575,0.75,1.0,72.48521245000006

@@ -1,0 +1,2 @@
+model,avg_latency_sec,avg_keyword_score,language_match_rate,no_prototype_rate,avg_auto_score_100
+qwen3_4b,51.861110491666444,0.5916666666666667,0.6666666666666666,1.0,68.25303183749998

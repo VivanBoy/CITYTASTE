@@ -1,0 +1,66 @@
+model,id,question,expected_lang,answer,latency_sec,keyword_score,lang_ok,proto_ok,speed_score,auto_score_100,manual_score_5,notes
+gemma3_4b,1,Trouve-moi un restaurant italien proche du centre-ville d’Ottawa.,fr,"<final>Voici 3 restaurants italiens proches du centre-ville d’Ottawa :
+*   Paninaro : 82 O’Connor Street, à 0,14 km du centre-ville.
+*   Tosca : 144 O’Connor Street, à 0,30 km du centre-ville.
+*   North & Navy : 226 Nepean Street, à 0,55 km du centre-ville.  Ce restaurant a une note de 4,6 sur Google avec 1697 avis. </final>",57.808246399999916,1.0,1.0,1.0,0.0,85.0,,
+gemma3_4b,2,Je cherche un restaurant chinois près de St-Laurent.,fr,Je n’ai pas trouvé de correspondance exacte pour ce restaurant de cuisine chinese près de st laurent dans les données actuelles de CityTaste. Tu peux essayer d’élargir la zone ou de retirer un filtre.,2.21348769999895,0.6,1.0,1.0,0.7786512300001049,82.67976845000156,,
+gemma3_4b,3,Je veux un hôtel près du centre-ville.,fr,"<final>Voici 3 hôtels situés à Ottawa, près du centre-ville :
+*   **Sheraton Ottawa Hotel** : Situé à 0.0875 km du centre-ville, avec une note de 4.3 sur Google.
+*   **reStays** : À 0.0879 km du centre-ville.
+*   **Capital Hill Hotel & Suites** : À 0.1258 km du centre-ville.",49.13825999999972,1.0,1.0,1.0,0.0,85.0,,
+gemma3_4b,4,Find an Italian restaurant near downtown Ottawa.,en,"<final>Here are 3 Italian restaurants near downtown Ottawa:
+*   **Paninaro** - 82 O’Connor Street (0.14 km)
+*   **Tosca** - 144 O’Connor Street (0.30 km)
+*   **North & Navy** - 226 Nepean Street (0.55 km)</final>",50.7507925000009,1.0,1.0,1.0,0.0,85.0,,
+gemma3_4b,5,Find a hotel near downtown.,en,"<final>Here are 3 hotels near downtown Ottawa, within 5km:</final>",33.24294259999988,0.75,1.0,1.0,0.0,76.25,,
+gemma3_4b,6,How do I use filters in CityTaste?,en,"Selon les données disponibles, CityTaste peut s’appuyer sur des critères comme :
+- le type de lieu
+- la cuisine
+- la distance
+- la note
+- certaines informations pratiques comme l’accessibilité ou la disponibilité de détails
+Pour un restaurant, l’utilisateur peut par exemple chercher :
+- un restaurant italien
+- une cuisine africaine
+- un lieu bien noté
+- un lieu proche du centre
+Pour un hébergement, l’utilisateur peut plutôt chercher :
+- un hôtel
+- un motel
+- une auberge
+- un lieu bien situé
+- une option avec de bonnes évaluations lorsqu’elles sont disponibles",5.377943800000139,0.5,0.0,1.0,0.4622056199999861,49.43308429999979,,
+gemma3_4b,7,Comment utiliser les filtres dans CityTaste ?,fr,"Selon les données disponibles, CityTaste peut s’appuyer sur des critères comme :
+- le type de lieu
+- la cuisine
+- la distance
+- la note
+- certaines informations pratiques comme l’accessibilité ou la disponibilité de détails
+Pour un restaurant, l’utilisateur peut par exemple chercher :
+- un restaurant italien
+- une cuisine africaine
+- un lieu bien noté
+- un lieu proche du centre
+Pour un hébergement, l’utilisateur peut plutôt chercher :
+- un hôtel
+- un motel
+- une auberge
+- un lieu bien situé
+- une option avec de bonnes évaluations lorsqu’elles sont disponibles",2.342165699999896,0.5,1.0,1.0,0.7657834300000104,78.98675145000016,,
+gemma3_4b,8,CityTaste permet-il de faire une réservation ?,fr,"Non. CityTaste n’effectue pas de réservation à la place de l’utilisateur.
+Le site sert à :
+- découvrir des lieux
+- consulter certaines informations utiles
+- comparer plusieurs options
+- accéder, lorsque disponible, au site web du lieu ou à ses informations principales
+Si l’utilisateur souhaite réserver, il doit généralement passer par le site officiel du lieu ou par un service externe.",2.3289464999998017,0.75,1.0,1.0,0.7671053500000198,87.7565802500003,,
+gemma3_4b,9,How are the results ranked?,en,"Les résultats sont généralement ordonnés selon une logique de pertinence. Cette logique peut tenir compte de plusieurs éléments comme :
+- le type de lieu demandé
+- la cuisine recherchée
+- la distance
+- la note
+- la qualité ou la complétude des informations disponibles
+L’objectif est de mettre en avant des options plausibles et utiles, pas simplement d’afficher une liste brute.",2.283750599999621,0.25,0.0,1.0,0.7716249400000379,45.32437410000057,,
+gemma3_4b,10,Comment activer ma position ?,fr,"Pour activer ta position, utilise l’option de localisation affichée par l’interface si elle est disponible. Ton navigateur devrait alors demander l’autorisation. Si tu acceptes, CityTaste pourra mieux interpréter les demandes de proximité. Si tu refuses, le site peut quand même fonctionner avec une référence de distance plus générale.",2.270383299999594,1.0,1.0,1.0,0.7729616700000406,96.59442505000061,,
+gemma3_4b,11,Why is this place recommended?,en,Paninaro is recommended on CityTaste because it has a high rating of 4.6 stars based on 400 reviews. It’s a restaurant serving Italian cuisine located at 82 O’Connor Street in Ottawa.,20.451939999999013,0.8,1.0,1.0,0.0,78.0,,
+gemma3_4b,12,Quelle est l’adresse de ce lieu ?,fr,"Adresse : Rideau Street, Ottawa",2.260996300001352,1.0,1.0,1.0,0.7739003699998648,96.60850554999797,,

@@ -1,65 +1,54 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-from llama_cpp import Llama
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_MODEL_PATH = BASE_DIR / "models" / "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-
-LLM_MODEL_PATH = Path(os.getenv("CITYTASTE_LLM_MODEL_PATH", str(DEFAULT_MODEL_PATH)))
-LLM_CTX_SIZE = int(os.getenv("CITYTASTE_LLM_CTX_SIZE", "4096"))
-LLM_MAX_TOKENS = int(os.getenv("CITYTASTE_LLM_MAX_TOKENS", "512"))
-LLM_TEMPERATURE = float(os.getenv("CITYTASTE_LLM_TEMPERATURE", "0.2"))
-LLM_THREADS = int(os.getenv("CITYTASTE_LLM_THREADS", "6"))
+import requests
 
 
-def build_llama3_prompt(system: str, user: str) -> str:
-    return (
-        "<|start_header_id|>system<|end_header_id|>\n"
-        f"{system}\n"
-        "<|eot_id|>"
-        "<|start_header_id|>user<|end_header_id|>\n"
-        f"{user}\n"
-        "<|eot_id|>"
-        "<|start_header_id|>assistant<|end_header_id|>\n"
-    )
+OLLAMA_BASE_URL = os.getenv("CITYTASTE_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("CITYTASTE_OLLAMA_MODEL", "gemma3:4b")
+
+# Réglages performance
+OLLAMA_TEMPERATURE = float(os.getenv("CITYTASTE_LLM_TEMPERATURE", "0.1"))
+OLLAMA_MAX_TOKENS = int(os.getenv("CITYTASTE_LLM_MAX_TOKENS", "180"))
+OLLAMA_TIMEOUT = int(os.getenv("CITYTASTE_OLLAMA_TIMEOUT", "180"))
+OLLAMA_KEEP_ALIVE = os.getenv("CITYTASTE_OLLAMA_KEEP_ALIVE", "30m")
+OLLAMA_NUM_CTX = int(os.getenv("CITYTASTE_OLLAMA_NUM_CTX", "2048"))
+
+
+def build_messages(system: str, user: str) -> List[Dict[str, str]]:
+    return [
+        {"role": "system", "content": system or "Tu es un assistant utile."},
+        {"role": "user", "content": user or ""},
+    ]
+
 
 class LLMService:
     def __init__(
         self,
-        model_path: Path = LLM_MODEL_PATH,
-        n_ctx: int = LLM_CTX_SIZE,
-        max_tokens: int = LLM_MAX_TOKENS,
-        temperature: float = LLM_TEMPERATURE,
-        n_threads: int = LLM_THREADS,
+        base_url: str = OLLAMA_BASE_URL,
+        model: str = OLLAMA_MODEL,
+        temperature: float = OLLAMA_TEMPERATURE,
+        max_tokens: int = OLLAMA_MAX_TOKENS,
+        timeout: int = OLLAMA_TIMEOUT,
+        keep_alive: str = OLLAMA_KEEP_ALIVE,
+        num_ctx: int = OLLAMA_NUM_CTX,
     ):
-        self.model_path = Path(model_path)
-        self.n_ctx = n_ctx
-        self.max_tokens = max_tokens
+        self.base_url = base_url.rstrip("/")
+        self.model = model
         self.temperature = temperature
-        self.n_threads = n_threads
-        self._llm: Optional[Llama] = None
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.keep_alive = keep_alive
+        self.num_ctx = num_ctx
 
     def is_available(self) -> bool:
-        return self.model_path.exists()
-
-    def _load_model(self):
-        if self._llm is None:
-            if not self.model_path.exists():
-                raise FileNotFoundError(
-                    f"Modèle GGUF introuvable : {self.model_path}"
-                )
-
-            self._llm = Llama(
-                model_path=str(self.model_path),
-                n_ctx=self.n_ctx,
-                n_threads=self.n_threads,
-                verbose=False,
-            )
+        try:
+            resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            return resp.ok
+        except Exception:
+            return False
 
     def generate(
         self,
@@ -68,32 +57,58 @@ class LLMService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        self._load_model()
-
         final_temperature = self.temperature if temperature is None else temperature
         final_max_tokens = self.max_tokens if max_tokens is None else max_tokens
 
-        full_prompt = build_llama3_prompt(
-            system=system or "Tu es un assistant utile.",
-            user=prompt,
+        payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": build_messages(
+                system=system or "Tu es un assistant utile.",
+                user=prompt,
+            ),
+            "stream": False,
+            "keep_alive": self.keep_alive,
+            "options": {
+                "temperature": final_temperature,
+                "num_predict": final_max_tokens,
+                "num_ctx": self.num_ctx,
+            },
+        }
+
+        resp = requests.post(
+            f"{self.base_url}/api/chat",
+            json=payload,
+            timeout=self.timeout,
         )
+        resp.raise_for_status()
 
-        output = self._llm(
-            full_prompt,
-            max_tokens=final_max_tokens,
-            temperature=final_temperature,
-            stop=[
-                "<|eot_id|>",
-                "<|end_of_text|>",
-                "<|start_header_id|>",
-            ],
-        )
+        data = resp.json()
+        message = data.get("message") or {}
+        content = (message.get("content") or "").strip()
+        return content
 
-        text = output["choices"][0]["text"].strip()
-        return text
+    def preload(self) -> bool:
+        try:
+            payload = {
+                "model": self.model,
+                "stream": False,
+                "keep_alive": self.keep_alive,
+                "messages": [],
+                "options": {
+                    "num_ctx": self.num_ctx,
+                },
+            }
+            resp = requests.post(
+                f"{self.base_url}/api/chat",
+                json=payload,
+                timeout=30,
+            )
+            return resp.ok
+        except Exception:
+            return False
 
 
-_llm_service = None
+_llm_service: Optional[LLMService] = None
 
 
 def get_llm_service() -> LLMService:

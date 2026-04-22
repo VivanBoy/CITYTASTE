@@ -1,14 +1,15 @@
+from __future__ import annotations
+
 from pathlib import Path
 import json
 import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Set
 
-import numpy as np
 import joblib
+import numpy as np
 from sentence_transformers import SentenceTransformer
 
-from services.llm_service import get_llm_service
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 INDEX_DIR = BASE_DIR / "data" / "site_rag_index"
@@ -17,6 +18,9 @@ CHUNKS_PATH = INDEX_DIR / "chunks.json"
 EMBEDDINGS_PATH = INDEX_DIR / "embeddings.npy"
 INDEX_PATH = INDEX_DIR / "nn_index.joblib"
 METADATA_PATH = INDEX_DIR / "metadata.json"
+
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
 
 ENGLISH_HINTS = {
     "the", "a", "an", "and", "or", "but", "with", "for", "from", "to", "of",
@@ -31,7 +35,7 @@ ENGLISH_HINTS = {
 
 FRENCH_HINTS = {
     "le", "la", "les", "un", "une", "des", "et", "ou", "mais", "avec", "pour",
-    "de", "du", "dans", "sur", "près", "meilleur", "bon", "restaurant", "hôtel",
+    "de", "du", "dans", "sur", "pres", "près", "meilleur", "bon", "restaurant", "hôtel",
     "nourriture", "où", "quoi", "quel", "quelle", "comment", "peux", "peut",
     "est", "sont", "ouvert", "fermé", "note", "prix", "pas", "cher",
     "montre", "trouve", "recommande", "recommandation", "cherche", "aide", "filtre", "filtres",
@@ -103,7 +107,7 @@ def detect_query_language(text: str) -> str:
 
     if re.search(r"\b(can you|i want|i need|show me|find me|what is|where is|how do i|how can i|do i need|can i|why)\b", t):
         en_score += 3
-    if re.search(r"\b(peux[- ]?tu|je veux|j'ai besoin|montre[- ]moi|trouve[- ]moi|qu'est-ce que|où est|comment|dois[- ]je|puis[- ]je|pourquoi)\b", t):
+    if re.search(r"\b(peux[- ]?tu|je veux|j ai besoin|j'ai besoin|montre[- ]moi|trouve[- ]moi|qu est ce que|qu'est-ce que|ou est|où est|comment|dois[- ]je|puis[- ]je|pourquoi)\b", t):
         fr_score += 3
 
     return "en" if en_score > fr_score else "fr"
@@ -203,29 +207,39 @@ class SiteRAGService:
         self.embeddings = self._load_embeddings()
         self.nn_index = self._load_index()
         self.metadata = self._load_metadata()
-        self.embedding_model = SentenceTransformer(self.metadata["embedding_model_name"])
+        embedding_model_name = self.metadata.get("embedding_model_name", DEFAULT_EMBEDDING_MODEL)
+        self.embedding_model = SentenceTransformer(embedding_model_name)
 
         print("\n===== SITE RAG DEBUG =====")
         print("SITE_RAG_SERVICE FILE:", __file__)
         print("CHUNKS PATH:", CHUNKS_PATH)
+        print("EMBEDDING MODEL:", embedding_model_name)
         print("==========================\n")
 
-    def _load_chunks(self):
+    def _load_chunks(self) -> List[Dict[str, Any]]:
+        if not CHUNKS_PATH.exists():
+            raise FileNotFoundError(f"Fichier chunks introuvable : {CHUNKS_PATH}")
         with open(CHUNKS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _load_embeddings(self):
+        if not EMBEDDINGS_PATH.exists():
+            raise FileNotFoundError(f"Fichier embeddings introuvable : {EMBEDDINGS_PATH}")
         return np.load(EMBEDDINGS_PATH)
 
     def _load_index(self):
+        if not INDEX_PATH.exists():
+            raise FileNotFoundError(f"Index nearest neighbors introuvable : {INDEX_PATH}")
         return joblib.load(INDEX_PATH)
 
-    def _load_metadata(self):
+    def _load_metadata(self) -> Dict[str, Any]:
+        if not METADATA_PATH.exists():
+            return {"embedding_model_name": DEFAULT_EMBEDDING_MODEL}
         with open(METADATA_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _clean_chunk_text(self, text: str) -> str:
-        text = text.strip()
+        text = (text or "").strip()
         text = re.sub(r"^##\s+", "", text, flags=re.MULTILINE)
         text = re.sub(r"^#\s+", "", text, flags=re.MULTILINE)
         text = re.sub(r"\n?---\n?", "\n", text)
@@ -338,7 +352,7 @@ class SiteRAGService:
         query_vec = self.embedding_model.encode(
             [rewritten_query],
             convert_to_numpy=True,
-            normalize_embeddings=True
+            normalize_embeddings=True,
         )
 
         n_neighbors = min(len(self.chunks), max(top_k * 5, 10))
@@ -366,38 +380,6 @@ class SiteRAGService:
         if topic and topic in ui:
             return ui[topic]
         return None
-
-    def _llm_translate_or_rephrase(self, query: str, answer: str, lang: str) -> str:
-        llm = get_llm_service()
-        if not llm.is_available():
-            return answer
-
-        language_instruction = "Reply in English." if lang == "en" else "Réponds en français."
-        system = (
-            "You answer questions about the CityTaste website. "
-            "Use only the verified answer provided below. "
-            "Do not invent details. Be clear, concise, and natural. "
-            "Do not present a distance as the user's real distance unless the verified answer clearly confirms that geolocation is active. "
-            "Do not imply that CityTaste makes direct reservations. "
-            f"{language_instruction}"
-        )
-        prompt = f"""
-{language_instruction}
-
-User question:
-{query}
-
-Verified answer:
-{answer}
-
-Write a direct answer for the user in the correct language.
-""".strip()
-
-        try:
-            text = llm.generate(prompt=prompt, system=system, temperature=0.1, max_tokens=180).strip()
-            return text or answer
-        except Exception:
-            return answer
 
     def answer_basic(self, query: str, top_k: int = 3, lang: Optional[str] = None) -> Dict[str, Any]:
         lang = lang or detect_query_language(query)
@@ -434,7 +416,7 @@ Write a direct answer for the user in the correct language.
             if topic in strict_topics:
                 final_answer = clean_answer or template_answer or ui["not_found"]
             else:
-                final_answer = self._llm_translate_or_rephrase(query, clean_answer, lang) if clean_answer else (template_answer or ui["not_found"])
+                final_answer = clean_answer or template_answer or ui["not_found"]
 
         return {
             "answer": final_answer,

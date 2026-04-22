@@ -8,7 +8,11 @@ import inspect
 import sklearn
 
 from services import assistant as assistant_module
-from services.assistant import simple_citytaste_assistant, get_place_details_for_ui, detect_user_language
+from services.assistant import (
+    simple_citytaste_assistant,
+    get_place_details_for_ui,
+    detect_user_language,
+)
 
 print("\n========== CITYTASTE DEBUG ==========")
 print("APP FILE LOADED :", __file__)
@@ -21,6 +25,7 @@ print("ASSISTANT FUNCTION MODULE :", simple_citytaste_assistant.__module__)
 print("====================================\n")
 
 app = FastAPI(title="CityTaste Assistant API")
+
 
 ALLOWED_ORIGINS = [
     "http://127.0.0.1:5500",
@@ -45,7 +50,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., description="Message de l'utilisateur")
     context: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Contexte optionnel envoyé par l'interface CityTaste"
+        description="Contexte optionnel envoyé par l'interface CityTaste",
     )
 
 
@@ -66,9 +71,9 @@ def _safe_fallback_answer(message: str, context: Optional[Dict[str, Any]] = None
 
 def _call_assistant(message: str, context: Optional[Dict[str, Any]] = None):
     """
-    Appelle l'assistant en restant compatible avec :
+    Compatible avec :
     - ancienne signature : simple_citytaste_assistant(message)
-    - future signature   : simple_citytaste_assistant(message, context=...)
+    - nouvelle signature : simple_citytaste_assistant(message, context=...)
     """
     try:
         sig = inspect.signature(simple_citytaste_assistant)

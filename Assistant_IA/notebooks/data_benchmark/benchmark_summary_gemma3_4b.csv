@@ -1,0 +1,2 @@
+model,avg_latency_sec,avg_keyword_score,language_match_rate,no_prototype_rate,avg_auto_score_100
+gemma3_4b,19.205821283333233,0.7625000000000001,0.8333333333333334,1.0,78.88612409583341

@@ -7,7 +7,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from services.place_service import search_places, get_place_details
 from services.site_rag_service import answer_site_with_rag
 from services.llm_service import get_llm_service
-from services.prompts import SYSTEM_PROMPT, build_place_response_prompt, format_place_results
+from services.query_parser_service import parse_user_query
+from services.prompts import (
+    SYSTEM_PROMPT,
+    format_place_results,
+    build_search_results_prompt,
+    build_site_answer_rewrite_prompt,
+    build_ood_prompt,
+)
 
 
 ENGLISH_HINTS = {
@@ -23,14 +30,14 @@ ENGLISH_HINTS = {
 
 FRENCH_HINTS = {
     "le", "la", "les", "un", "une", "des", "et", "ou", "mais", "avec", "pour",
-    "de", "du", "dans", "sur", "près", "meilleur", "bon", "restaurant", "hôtel",
-    "nourriture", "où", "quoi", "quel", "quelle", "comment", "peux", "peut", "est",
-    "sont", "ouvert", "fermé", "note", "prix", "pas", "cher", "montre", "trouve",
-    "recommande", "recommandation", "cherche", "aide", "filtre", "filtres", "recherche", "résultats",
-    "localisation", "position", "réservation", "réserver", "détails", "fonctionne",
-    "utiliser", "dataset", "données", "donnees", "merci", "bonjour", "salut", "ça",
-    "journee", "journée", "faim", "daccord", "accord", "pourquoi", "apparait",
-    "affiche", "classe", "classement", "classements", "centre", "centreville", "centre-ville"
+    "de", "du", "dans", "sur", "pres", "près", "meilleur", "bon", "restaurant", "hotel",
+    "hôtel", "nourriture", "ou", "où", "quoi", "quel", "quelle", "comment", "peux", "peut",
+    "est", "sont", "ouvert", "ferme", "fermé", "note", "prix", "pas", "cher", "montre",
+    "trouve", "recommande", "recommandation", "cherche", "aide", "filtre", "filtres",
+    "recherche", "resultats", "résultats", "localisation", "position", "reservation",
+    "réservation", "reserver", "réserver", "details", "détails", "fonctionne", "utiliser",
+    "dataset", "donnees", "données", "merci", "bonjour", "salut", "faim", "accord",
+    "pourquoi", "apparait", "apparaît", "affiche", "classement", "centre", "centreville", "centre-ville"
 }
 
 GREETINGS = ["bonjour", "salut", "hello", "hi", "bonsoir", "coucou", "hey"]
@@ -62,7 +69,7 @@ ROAD_HINTS = [
 ]
 
 SITE_DETAIL_FIELD_KEYWORDS = {
-    "address": ["address", "adresse"],
+    "address": ["address", "adresse", "where is", "ou est", "où est", "location"],
     "hours": ["hours", "opening hours", "open", "closed", "horaire", "horaires", "ouvert", "ouverte", "ferme", "fermé"],
     "website": ["website", "site", "site web", "web"],
     "rating": ["rating", "note", "reviews", "avis", "stars", "etoiles", "étoiles"],
@@ -120,6 +127,96 @@ def make_response(response_type: str, message: str, **extra: Any) -> Dict[str, A
     payload = {"type": response_type, "message": message, "answer": message}
     payload.update(extra)
     return payload
+
+
+def clean_final_answer(text: str) -> str:
+    if not text:
+        return ""
+
+    cleaned = text.strip()
+
+    # Supprime les balises <final>...</final> sans supprimer le contenu
+    cleaned = re.sub(r"</?\s*final\s*>", "", cleaned, flags=re.IGNORECASE).strip()
+
+    # Supprime le markdown gras global
+    cleaned = cleaned.replace("**", "")
+
+    prefix_patterns = [
+        r"^voici la reponse finale\s*:\s*",
+        r"^voici la réponse finale\s*:\s*",
+        r"^reponse finale\s*:\s*",
+        r"^réponse finale\s*:\s*",
+        r"^voici la reponse\s*:\s*",
+        r"^voici la réponse\s*:\s*",
+        r"^here is the final answer\s*:\s*",
+        r"^final answer\s*:\s*",
+        r"^search without result\s*:\s*",
+        r"^recherche sans resultat\s*:\s*",
+        r"^recherche sans résultat\s*:\s*",
+        r"^consigne finale\s*:\s*",
+        r"^une courte phrase d introduction\s*:\s*",
+        r"^question utilisateur\s*:\s*",
+        r"^filtres resolus\s*:\s*",
+        r"^filtres résolus\s*:\s*",
+        r"^resultats autorises\s*:\s*",
+        r"^résultats autorisés\s*:\s*",
+    ]
+    for pattern in prefix_patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE).strip()
+
+    banned_starts = [
+        "voici la réponse finale",
+        "voici la reponse finale",
+        "réponse finale",
+        "reponse finale",
+        "voici la réponse",
+        "voici la reponse",
+        "je comprends que l'utilisateur",
+        "je comprends que l utilisateur",
+        "je vais essayer de vous aider",
+        "je vais utiliser",
+        "je vais chercher",
+        "j'ai cherché",
+        "j ai cherche",
+        "après avoir analysé",
+        "apres avoir analyse",
+        "puisque je n'ai trouvé",
+        "puisque je n ai trouve",
+        "pour expliquer",
+        "recherche sans résultat",
+        "recherche sans resultat",
+        "consigne finale",
+        "une courte phrase d'introduction",
+        "une courte phrase d introduction",
+        "here is the final answer",
+        "i understand that the user",
+        "i will search",
+        "i will use",
+        "i searched",
+    ]
+
+    kept_lines = []
+    for line in cleaned.splitlines():
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+
+        line_clean = re.sub(r"</?\s*final\s*>", "", line_clean, flags=re.IGNORECASE).strip()
+        line_clean = line_clean.replace("**", "")
+        line_clean = re.sub(r"^\*\s+", "- ", line_clean)
+        if not line_clean:
+            continue
+
+        normalized = normalize_text(line_clean)
+        if any(normalized.startswith(normalize_text(prefix)) for prefix in banned_starts):
+            continue
+
+        kept_lines.append(line_clean)
+
+    cleaned = "\n".join(kept_lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    return cleaned or ""
 
 
 def _strip_role_prefix(value: str) -> str:
@@ -253,100 +350,13 @@ def get_ui_text(lang: str) -> Dict[str, str]:
         "page_context": "Je ne peux connaître la page actuelle ou le résultat sélectionné que si l’interface m’envoie ce contexte.",
     }
 
+
 def get_site_topic_fallback(topic: Optional[str], lang: str) -> str:
     ui = get_ui_text(lang)
     if topic and topic in ui:
         return ui[topic]
     return ui["site_unknown"]
 
-def get_strict_site_faq_answer(user_message: str, lang: str) -> Optional[str]:
-    q = normalize_text(user_message)
-
-    # Position non obligatoire
-    optional_location_phrases = [
-        "suis je oblige d activer ma position",
-        "suis je oblige d activer ma localisation",
-        "est ce que je dois activer ma position",
-        "est ce que je dois activer ma localisation",
-        "do i need to enable my location",
-        "do i have to enable my location",
-        "is location required",
-        "is my location required",
-    ]
-    if any(p in q for p in optional_location_phrases):
-        if lang == "en":
-            return (
-                "No. Enabling your location is optional in CityTaste. "
-                "If you allow it, the site can better interpret proximity requests such as nearby or close to me. "
-                "Without your location, CityTaste can still work, but the displayed distance may rely on a general reference point instead of your real position."
-            )
-        return (
-            "Non. Activer ta position n’est pas obligatoire dans CityTaste. "
-            "Si tu l’autorises, le site peut mieux interpréter des demandes comme proche de moi. "
-            "Sans ta position, CityTaste peut quand même fonctionner, mais la distance affichée peut reposer sur un point de référence général plutôt que sur ta position réelle."
-        )
-
-    # Comment activer la position
-    enable_location_phrases = [
-        "comment activer ma position",
-        "comment activer ma localisation",
-        "how do i enable my location",
-        "how can i enable my location",
-        "how to enable my location",
-    ]
-    if any(p in q for p in enable_location_phrases):
-        if lang == "en":
-            return (
-                "To enable your location, use the location option shown by the interface if it is available. "
-                "Your browser should then ask for permission. If you allow it, CityTaste can better interpret nearby requests. "
-                "If you refuse, the site can still work with a more general distance reference."
-            )
-        return (
-            "Pour activer ta position, utilise l’option de localisation affichée par l’interface si elle est disponible. "
-            "Ton navigateur devrait alors demander l’autorisation. Si tu acceptes, CityTaste pourra mieux interpréter les demandes de proximité. "
-            "Si tu refuses, le site peut quand même fonctionner avec une référence de distance plus générale."
-        )
-
-    # Voir les détails d'un lieu
-    place_details_phrases = [
-        "comment voir les details d un lieu",
-        "comment voir les details dun lieu",
-        "comment voir les details d un endroit",
-        "how do i see the details of a place",
-        "how can i view place details",
-        "how do i open place details",
-    ]
-    if any(p in q for p in place_details_phrases):
-        if lang == "en":
-            return (
-                "To see more details about a place, open its result card or the detailed view associated with that result when it is available. "
-                "Depending on the place, CityTaste may show information such as the address, opening hours, website, rating, and photo."
-            )
-        return (
-            "Pour voir plus de détails sur un lieu, ouvre sa carte résultat ou la fiche détaillée associée à ce résultat quand elle est disponible. "
-            "Selon le lieu, CityTaste peut afficher des informations comme l’adresse, les horaires, le site web, la note et la photo."
-        )
-
-    # Pourquoi pas d'images
-    no_image_phrases = [
-        "pourquoi certains lieux n ont pas d images",
-        "pourquoi certains lieux n ont pas d image",
-        "why do some places not have images",
-        "why do some places not have photos",
-        "why do some places have no image",
-    ]
-    if any(p in q for p in no_image_phrases):
-        if lang == "en":
-            return (
-                "Some places do not have images because visual data is not always available or reliable for every result. "
-                "CityTaste prefers showing only information it can associate with enough confidence instead of filling missing fields artificially."
-            )
-        return (
-            "Certains lieux n’ont pas d’image parce que les données visuelles ne sont pas toujours disponibles ou suffisamment fiables pour chaque résultat. "
-            "CityTaste préfère montrer uniquement ce qu’il peut associer avec assez de confiance plutôt que de remplir artificiellement les champs manquants."
-        )
-
-    return None
 
 def is_greeting_only(text: str) -> bool:
     tokens = tokenize(text)
@@ -400,6 +410,19 @@ def is_page_context_question(text: str) -> bool:
     phrases = [
         "tu peux voir la page", "tu vois la page", "quelle page je suis", "page sur laquelle je suis",
         "can you see the page", "do you see the page", "what page am i on", "current page"
+    ]
+    return any(contains_phrase(q, p) for p in phrases)
+
+
+def is_place_address_followup(text: str) -> bool:
+    q = normalize_text(text)
+    phrases = [
+        "il est ou", "ou est il", "où est il",
+        "c est ou", "c est ou", "c'est où",
+        "where is it", "where is this place",
+        "what is the address", "what's the address",
+        "quelle est l adresse", "quelle est l'adresse",
+        "son adresse", "adresse"
     ]
     return any(contains_phrase(q, p) for p in phrases)
 
@@ -499,7 +522,7 @@ def is_place_explanation_question(text: str) -> bool:
     explanation_tokens = {
         "recommend", "recommended", "recommendation", "recommande", "recommandation",
         "result", "results", "resultat", "resultats", "shown", "show", "appear", "appears",
-        "apparait", "affiche", "propose", "suggested", "recommandation"
+        "apparait", "affiche", "propose", "suggested"
     }
     return bool(tokens & why_tokens) and bool(tokens & explanation_tokens)
 
@@ -512,9 +535,7 @@ def has_explicit_selected_place_reference(text: str) -> bool:
         "this restaurant", "this hotel", "this accommodation", "selected place", "selected result",
         "parle moi de ce lieu", "details de ce lieu", "details de ce resultat", "details de cette fiche"
     ]
-    if any(contains_phrase(q, p) for p in phrases):
-        return True
-    return False
+    return any(contains_phrase(q, p) for p in phrases)
 
 
 def detect_selected_place_detail_fields(text: str) -> List[str]:
@@ -537,11 +558,32 @@ def detect_selected_place_detail_fields(text: str) -> List[str]:
     return fields
 
 
+def extract_place_name_from_detail_query(text: str) -> Optional[str]:
+    q = normalize_text(text)
+    patterns = [
+        r"(?:adresse de|l adresse de|adresse du|details de|details du|detail de|detail du)\s+([a-z0-9\s&\-']+)$",
+        r"(?:address of|details of|where is)\s+([a-z0-9\s&\-']+)$",
+    ]
+    generic = {
+        "ce lieu", "cet endroit", "ce restaurant", "ce resultat", "cette fiche",
+        "this place", "this result", "this restaurant", "this hotel", "selected place"
+    }
+
+    for pattern in patterns:
+        match = re.search(pattern, q, flags=re.IGNORECASE)
+        if match:
+            candidate = match.group(1).strip()
+            if candidate and candidate not in generic:
+                return candidate
+
+    return None
+
+
 def is_sorting_query(text: str) -> bool:
     q = normalize_text(text)
     sorting_phrases = [
         "comment les resultats sont classes", "comment les resultats sont classés",
-        "classement des resultats", "classements des resultats", "classement des résultats",
+        "classement des resultats", "classement des résultats",
         "order of results", "how are results ranked", "how are results sorted",
         "sorting of results", "sort order"
     ]
@@ -570,16 +612,6 @@ def has_site_signal(text: str) -> bool:
         "comment les resultats sont classes", "classement des resultats"
     ]
     return contains_any_token(text, site_tokens) or any(contains_phrase(text, p) for p in site_phrases)
-
-
-def has_place_signal(text: str) -> bool:
-    return any([
-        detect_place_type(text) is not None,
-        detect_cuisine(text) is not None,
-        detect_max_distance_km(text) is not None,
-        detect_min_rating(text) is not None,
-        contains_any_token(text, ["restaurant", "restaurants", "resto", "restos", "hotel", "hotels", "hôtel", "hôtels", "accommodation", "hebergement", "hébergement"]),
-    ])
 
 
 def mentions_other_city(text: str) -> bool:
@@ -615,11 +647,6 @@ def _cleanup_area_keyword(value: str) -> Optional[str]:
 def extract_address_or_area_keyword(text: str, context: Optional[Dict[str, Any]] = None) -> Optional[str]:
     normalized = normalize_text(text)
 
-    if any(x in normalized for x in ["ma localisation", "ma position", "my location", "my position"]):
-        # On ne transforme pas ça en keyword géographique réel
-        if not re.search(r"\b(?:road|rd|street|st|avenue|ave|boulevard|blvd|drive|dr|lane|ln|way|court|ct|rue|chemin)\b", normalized):
-            return None
-
     area_patterns = [
         r"(?:dans\s+la\s+zone\s+de|dans\s+la\s+zone\s+du|dans\s+le\s+quartier\s+de|dans\s+le\s+quartier\s+du|dans\s+le\s+secteur\s+de|dans\s+le\s+secteur\s+du|in\s+the\s+area\s+of|in\s+the\s+zone\s+of|in\s+the\s+district\s+of|in\s+the\s+neighborhood\s+of|in\s+the\s+neighbourhood\s+of)\s+([a-z0-9\-\s'.#]+)",
         r"(?:pres\s+de|proche\s+de|near|close\s+to|around)\s+([a-z0-9\-\s'.#]+)",
@@ -649,7 +676,6 @@ def extract_address_or_area_keyword(text: str, context: Optional[Dict[str, Any]]
     if "centre ottawa" in normalized or "center ottawa" in normalized or "centre ville" in normalized or "centreville" in normalized or "downtown ottawa" in normalized:
         return "centre ottawa"
 
-    # Si le message est court et ressemble à une zone seule
     tokens = tokenize(normalized)
     if 1 <= len(tokens) <= 4 and any(h in normalized for h in AREA_HINTS):
         value = _cleanup_area_keyword(normalized)
@@ -801,158 +827,6 @@ def extract_active_filters(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {k: v for k, v in filters.items() if v not in (None, "")}
 
 
-def _extract_search_constraints(text: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    return {
-        "place_type": detect_place_type(text),
-        "cuisine": detect_cuisine(text),
-        "max_distance_km": detect_max_distance_km(text),
-        "min_rating": detect_min_rating(text),
-        "keyword": extract_address_or_area_keyword(text, context=context),
-    }
-
-
-def infer_recent_site_topic(context: Optional[Dict[str, Any]]) -> Optional[str]:
-    history = get_history_messages(context)
-    for item in reversed(history[-8:]):
-        topic = infer_site_topic(item)
-        if topic:
-            return topic
-    return None
-
-
-def infer_recent_places_constraints(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    history = get_history_messages(context)
-    for item in reversed(history[-8:]):
-        cleaned = _strip_role_prefix(item)
-        constraints = _extract_search_constraints(cleaned, context=None)
-        if has_search_intent(cleaned) or has_place_signal(cleaned) or any(v is not None for v in constraints.values()):
-            return {k: v for k, v in constraints.items() if v is not None}
-    return {}
-
-
-def _strip_leading_confirmation(text: str) -> str:
-    cleaned = normalize_text(text)
-    cleaned = re.sub(r"^(oui|yes|ok|okay|d accord|daccord|ouais)\b", "", cleaned).strip()
-    return cleaned
-
-
-def is_short_search_followup(text: str, context: Optional[Dict[str, Any]]) -> bool:
-    cleaned = _strip_leading_confirmation(text)
-    if not cleaned:
-        return False
-    tokens = cleaned.split()
-    if len(tokens) > 4:
-        return False
-    if has_search_intent(cleaned) or has_site_signal(cleaned):
-        return False
-    if is_acknowledgement(cleaned) or is_simple_yes(cleaned):
-        return False
-    recent = infer_recent_places_constraints(context)
-    return bool(recent)
-
-
-def is_search_like_message(text: str) -> bool:
-    return has_search_intent(text) or has_place_signal(text) or any(
-        x in normalize_text(text) for x in ["zone", "quartier", "secteur", "area", "center", "centre", "downtown", "byward", "st laurent"]
-    )
-
-
-def merge_followup_places_constraints(user_message: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    recent = infer_recent_places_constraints(context)
-    current = _extract_search_constraints(user_message, context=context)
-    cleaned_followup = _strip_leading_confirmation(user_message)
-
-    merged = dict(recent)
-    for key, value in current.items():
-        if value is not None:
-            merged[key] = value
-
-    if merged.get("keyword") is None and cleaned_followup:
-        # pour des suivis très courts comme "St Laurent"
-        if 1 <= len(cleaned_followup.split()) <= 4:
-            maybe_keyword = _cleanup_area_keyword(cleaned_followup)
-            if maybe_keyword:
-                merged["keyword"] = maybe_keyword
-
-    return merged
-
-
-def route_intent(user_message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    selected_place = extract_selected_place(context)
-    search_constraints = _extract_search_constraints(user_message, context=context)
-
-    if is_thanks_only(user_message):
-        return {"intent": "thanks", "lang_needs_llm": True}
-
-    # si l'utilisateur dit juste "oui/yes" après une question site connue
-    if is_simple_yes(user_message):
-        recent_topic = infer_recent_site_topic(context)
-        if recent_topic:
-            return {"intent": "site_query", "topic": recent_topic}
-
-    if is_acknowledgement(user_message):
-        return {"intent": "ack", "lang_needs_llm": True}
-    if is_goodbye(user_message):
-        return {"intent": "goodbye", "lang_needs_llm": True}
-    if is_how_are_you(user_message):
-        return {"intent": "how_are_you", "lang_needs_llm": True}
-    if is_hungry_message(user_message):
-        return {"intent": "hungry", "lang_needs_llm": True}
-    if is_greeting_only(user_message):
-        return {"intent": "greeting", "lang_needs_llm": True}
-    if is_identity_or_capabilities_question(user_message):
-        return {"intent": "capabilities", "lang_needs_llm": True}
-    if is_dataset_question(user_message):
-        return {"intent": "dataset", "lang_needs_llm": True}
-    if is_page_context_question(user_message):
-        return {"intent": "page_context_query"}
-
-    if is_place_explanation_question(user_message):
-        if selected_place:
-            return {"intent": "place_explanation", "topic": "recommendation"}
-        return {"intent": "site_query", "topic": "recommendation"}
-
-    # Les vraies recherches doivent passer avant les détails de fiche,
-    # sinon un selected_place collant casse les nouvelles requêtes.
-    if is_search_like_message(user_message):
-        merged = dict(search_constraints)
-        if is_short_search_followup(user_message, context):
-            merged = merge_followup_places_constraints(user_message, context)
-        return {
-            "intent": "places_query",
-            "place_type": merged.get("place_type"),
-            "cuisine": merged.get("cuisine"),
-            "max_distance_km": merged.get("max_distance_km"),
-            "min_rating": merged.get("min_rating"),
-            "keyword": merged.get("keyword"),
-        }
-
-    detail_fields = detect_selected_place_detail_fields(user_message)
-    if selected_place and detail_fields and has_explicit_selected_place_reference(user_message):
-        return {"intent": "place_detail_query", "fields": detail_fields}
-
-    if is_out_of_scope_request(user_message) and not has_place_signal(user_message) and not has_site_signal(user_message):
-        return {"intent": "out_of_scope", "lang_needs_llm": True}
-    if mentions_other_city(user_message) and not has_site_signal(user_message):
-        return {"intent": "ottawa_only", "lang_needs_llm": True}
-
-    if has_site_signal(user_message):
-        return {"intent": "site_query", "topic": infer_site_topic(user_message)}
-
-    if is_short_search_followup(user_message, context):
-        merged = merge_followup_places_constraints(user_message, context)
-        return {
-            "intent": "places_query",
-            "place_type": merged.get("place_type"),
-            "cuisine": merged.get("cuisine"),
-            "max_distance_km": merged.get("max_distance_km"),
-            "min_rating": merged.get("min_rating"),
-            "keyword": merged.get("keyword"),
-        }
-
-    return {"intent": "out_of_scope", "lang_needs_llm": True}
-
-
 def llm_is_available() -> bool:
     try:
         return get_llm_service().is_available()
@@ -960,11 +834,109 @@ def llm_is_available() -> bool:
         return False
 
 
+def _llm_generate(prompt: str, system: str, temperature: float = 0.25, max_tokens: int = 220) -> str:
+    llm = get_llm_service()
+    raw = llm.generate(
+        prompt=prompt,
+        system=system,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    ).strip()
+
+    cleaned = clean_final_answer(raw)
+    return cleaned or raw
+
+
+def get_strict_site_faq_answer(user_message: str, lang: str) -> Optional[str]:
+    q = normalize_text(user_message)
+
+    optional_location_phrases = [
+        "suis je oblige d activer ma position",
+        "suis je oblige d activer ma localisation",
+        "est ce que je dois activer ma position",
+        "est ce que je dois activer ma localisation",
+        "do i need to enable my location",
+        "do i have to enable my location",
+        "is location required",
+        "is my location required",
+    ]
+    if any(p in q for p in optional_location_phrases):
+        if lang == "en":
+            return (
+                "No. Enabling your location is optional in CityTaste. "
+                "If you allow it, the site can better interpret proximity requests such as nearby or close to me. "
+                "Without your location, CityTaste can still work, but the displayed distance may rely on a general reference point instead of your real position."
+            )
+        return (
+            "Non. Activer ta position n’est pas obligatoire dans CityTaste. "
+            "Si tu l’autorises, le site peut mieux interpréter des demandes comme proche de moi. "
+            "Sans ta position, CityTaste peut quand même fonctionner, mais la distance affichée peut reposer sur un point de référence général plutôt que sur ta position réelle."
+        )
+
+    enable_location_phrases = [
+        "comment activer ma position",
+        "comment activer ma localisation",
+        "how do i enable my location",
+        "how can i enable my location",
+        "how to enable my location",
+    ]
+    if any(p in q for p in enable_location_phrases):
+        if lang == "en":
+            return (
+                "To enable your location, use the location option shown by the interface if it is available. "
+                "Your browser should then ask for permission. If you allow it, CityTaste can better interpret nearby requests. "
+                "If you refuse, the site can still work with a more general distance reference."
+            )
+        return (
+            "Pour activer ta position, utilise l’option de localisation affichée par l’interface si elle est disponible. "
+            "Ton navigateur devrait alors demander l’autorisation. Si tu acceptes, CityTaste pourra mieux interpréter les demandes de proximité. "
+            "Si tu refuses, le site peut quand même fonctionner avec une référence de distance plus générale."
+        )
+
+    place_details_phrases = [
+        "comment voir les details d un lieu",
+        "comment voir les details dun lieu",
+        "comment voir les details d un endroit",
+        "how do i see the details of a place",
+        "how can i view place details",
+        "how do i open place details",
+    ]
+    if any(p in q for p in place_details_phrases):
+        if lang == "en":
+            return (
+                "To see more details about a place, open its result card or the detailed view associated with that result when it is available. "
+                "Depending on the place, CityTaste may show information such as the address, opening hours, website, rating, and photo."
+            )
+        return (
+            "Pour voir plus de détails sur un lieu, ouvre sa carte résultat ou la fiche détaillée associée à ce résultat quand elle est disponible. "
+            "Selon le lieu, CityTaste peut afficher des informations comme l’adresse, les horaires, le site web, la note et la photo."
+        )
+
+    no_image_phrases = [
+        "pourquoi certains lieux n ont pas d images",
+        "pourquoi certains lieux n ont pas d image",
+        "why do some places not have images",
+        "why do some places not have photos",
+        "why do some places have no image",
+    ]
+    if any(p in q for p in no_image_phrases):
+        if lang == "en":
+            return (
+                "Some places do not have images because visual data is not always available or reliable for every result. "
+                "CityTaste prefers showing only information it can associate with enough confidence instead of filling missing fields artificially."
+            )
+        return (
+            "Certains lieux n’ont pas d’image parce que les données visuelles ne sont pas toujours disponibles ou suffisamment fiables pour chaque résultat. "
+            "CityTaste préfère montrer uniquement ce qu’il peut associer avec assez de confiance plutôt que de remplir artificiellement les champs manquants."
+        )
+
+    return None
+
+
 def generate_natural_message(intent: str, user_message: str, lang: str, fallback: str, context: Optional[Dict[str, Any]] = None) -> str:
     if not llm_is_available():
         return fallback
 
-    llm = get_llm_service()
     history = "\n".join(get_history_messages(context)[-6:])
 
     intent_guidance = {
@@ -1013,10 +985,11 @@ Write one short natural reply.
 """.strip()
 
     try:
-        text = llm.generate(prompt=prompt, system=system, temperature=0.35, max_tokens=120).strip()
+        text = _llm_generate(prompt=prompt, system=system, temperature=0.35, max_tokens=120)
         return text or fallback
     except Exception:
         return fallback
+
 
 def rephrase_site_answer(
     user_message: str,
@@ -1025,57 +998,40 @@ def rephrase_site_answer(
     context: Optional[Dict[str, Any]] = None,
     topic: Optional[str] = None,
 ) -> str:
-    ui = get_ui_text(lang)
     verified_answer = (verified_answer or "").strip()
     if not verified_answer:
         return get_site_topic_fallback(topic, lang)
 
-    # Pour ces sujets, on évite presque totalement la reformulation libre,
-    # car c’est là que le bot invente le plus.
-    strict_topics = {"location", "booking", "filters", "results", "sorting", "usage", "recommendation"}
-
-    if topic in strict_topics:
-        return verified_answer
-
     if not llm_is_available():
-        return verified_answer
+        fallback = get_site_topic_fallback(topic, lang)
+        return fallback or verified_answer
 
-    llm = get_llm_service()
     history = "\n".join(get_history_messages(context)[-6:])
+    prompt = build_site_answer_rewrite_prompt(
+        user_message=user_message,
+        language=lang,
+        raw_site_answer=verified_answer,
+    )
+    prompt = f"{prompt}\n\nRecent conversation:\n{history or '- No recent history'}"
+
     system = (
         SYSTEM_PROMPT
         + "\n\n"
         + language_instruction(lang)
-        + "\nYou answer questions about CityTaste using only the verified answer provided."
-        + "\nBe concise, natural, and accurate."
-        + "\nDo not invent buttons, icons, menu items, login steps, browser settings paths, or unsupported UI flows."
-        + "\nDo not claim a personalized user distance unless it is explicitly confirmed in the verified answer."
-        + "\nDo not imply that CityTaste makes direct reservations."
-        + "\nIf the verified answer already clearly answers the question, keep it very close to the original wording."
+        + "\nUse only the verified answer provided."
+        + "\nDo not invent buttons, pages, unsupported UI flows, or features."
+        + "\nKeep the same meaning."
+        + "\nIf the target language is English, write only in English."
+        + "\nIf the target language is French, write only in French."
+        + "\nDo not mix French and English."
     )
-    prompt = f"""
-{language_instruction(lang)}
-
-Recent conversation:
-{history or '- No recent history'}
-
-Topic:
-{topic or 'unknown'}
-
-User question:
-{user_message}
-
-Verified answer:
-{verified_answer}
-
-Rewrite only lightly. Keep the same meaning. Do not add any new facts.
-""".strip()
 
     try:
-        text = llm.generate(prompt=prompt, system=system, temperature=0.05, max_tokens=160).strip()
+        text = _llm_generate(prompt=prompt, system=system, temperature=0.05, max_tokens=180)
         return text or verified_answer
     except Exception:
-        return verified_answer
+        fallback = get_site_topic_fallback(topic, lang)
+        return fallback or verified_answer
 
 
 def format_places_for_ui(places: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1114,6 +1070,282 @@ def _sort_places_for_output(places: List[Dict[str, Any]]) -> List[Dict[str, Any]
         )
 
     return sorted(places, key=key_fn)
+
+
+def _extract_search_constraints(user_message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    parsed = parse_user_query(user_message)
+
+    place_type = parsed.get("place_type") or detect_place_type(user_message)
+    cuisine = parsed.get("cuisine") or detect_cuisine(user_message)
+    max_distance_km = detect_max_distance_km(user_message)
+    min_rating = detect_min_rating(user_message)
+
+    zone_value = parsed.get("zone")
+    keyword = None
+    if isinstance(zone_value, str) and zone_value.strip():
+        keyword = zone_value.replace("_", " ")
+    if not keyword:
+        keyword = extract_address_or_area_keyword(user_message, context=context)
+
+    return {
+        "place_type": place_type,
+        "cuisine": cuisine,
+        "max_distance_km": max_distance_km,
+        "min_rating": min_rating,
+        "keyword": keyword,
+        "_parser": parsed,
+    }
+
+
+def detect_missing_search_field(constraints: Dict[str, Any]) -> Optional[str]:
+    place_type = constraints.get("place_type")
+    cuisine = constraints.get("cuisine")
+    keyword = constraints.get("keyword")
+
+    if (place_type or cuisine) and not keyword:
+        return "keyword"
+
+    return None
+
+
+def get_pending_search(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(context, dict):
+        return {}
+
+    pending = context.get("pending_search")
+    if isinstance(pending, dict):
+        return dict(pending)
+
+    return {}
+
+
+def infer_recent_site_topic(context: Optional[Dict[str, Any]]) -> Optional[str]:
+    history = get_history_messages(context)
+    for item in reversed(history[-8:]):
+        topic = infer_site_topic(item)
+        if topic:
+            return topic
+    return None
+
+
+def infer_recent_places_constraints(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    history = get_history_messages(context)
+    for item in reversed(history[-8:]):
+        cleaned = _strip_role_prefix(item)
+        constraints = _extract_search_constraints(cleaned, context=None)
+        parsed = constraints.get("_parser") or {}
+        if parsed.get("intent") == "place_search" or has_search_intent(cleaned) or constraints.get("place_type") or constraints.get("cuisine") or constraints.get("keyword"):
+            return {k: v for k, v in constraints.items() if v is not None and k != "_parser"}
+    return {}
+
+
+def _strip_leading_confirmation(text: str) -> str:
+    cleaned = normalize_text(text)
+    cleaned = re.sub(r"^(oui|yes|ok|okay|d accord|daccord|ouais)\b", "", cleaned).strip()
+    return cleaned
+
+
+def is_short_search_followup(text: str, context: Optional[Dict[str, Any]]) -> bool:
+    cleaned = _strip_leading_confirmation(text)
+    if not cleaned:
+        return False
+    tokens = cleaned.split()
+    if len(tokens) > 4:
+        return False
+    if has_search_intent(cleaned) or has_site_signal(cleaned):
+        return False
+    if is_acknowledgement(cleaned) or is_simple_yes(cleaned):
+        return False
+    recent = infer_recent_places_constraints(context)
+    return bool(recent)
+
+
+def is_search_like_message(text: str) -> bool:
+    parsed = parse_user_query(text)
+    if parsed.get("intent") == "place_search":
+        return True
+    if parsed.get("cuisine") or parsed.get("zone") or parsed.get("place_type"):
+        return True
+    return has_search_intent(text) or any(
+        x in normalize_text(text) for x in ["zone", "quartier", "secteur", "area", "center", "centre", "downtown", "byward", "st laurent"]
+    )
+
+
+def merge_followup_places_constraints(user_message: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    recent = infer_recent_places_constraints(context)
+    current = _extract_search_constraints(user_message, context=context)
+    cleaned_followup = _strip_leading_confirmation(user_message)
+
+    merged = dict(recent)
+    for key, value in current.items():
+        if key == "_parser":
+            continue
+        if value is not None:
+            merged[key] = value
+
+    if merged.get("keyword") is None and cleaned_followup:
+        if 1 <= len(cleaned_followup.split()) <= 4:
+            maybe_keyword = _cleanup_area_keyword(cleaned_followup)
+            if maybe_keyword:
+                merged["keyword"] = maybe_keyword
+
+    return merged
+
+
+def merge_pending_search_with_user_reply(user_message: str, context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    pending = get_pending_search(context)
+    current = _extract_search_constraints(user_message, context=context)
+
+    merged = dict(pending)
+
+    for key in ["place_type", "cuisine", "max_distance_km", "min_rating", "keyword"]:
+        value = current.get(key)
+        if value is not None:
+            merged[key] = value
+
+    if not merged.get("keyword"):
+        maybe_keyword = extract_address_or_area_keyword(user_message, context=context)
+        if maybe_keyword:
+            merged["keyword"] = maybe_keyword
+
+    return merged
+
+
+def build_search_follow_up_message(lang: str, missing_field: str, constraints: Dict[str, Any]) -> str:
+    if missing_field == "keyword":
+        if lang == "en":
+            return "Which area of Ottawa do you want to search in?"
+        return "Dans quelle zone d’Ottawa veux-tu chercher ?"
+
+    if lang == "en":
+        return "Could you clarify your search?"
+    return "Peux-tu préciser ta recherche ?"
+
+
+def search_place_by_name(place_name: str) -> Optional[Dict[str, Any]]:
+    if not place_name:
+        return None
+
+    try:
+        rows = search_places(keyword=place_name, limit=5)
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+
+    target = normalize_text(place_name)
+
+    for row in rows:
+        row_name = normalize_text(row.get("name"))
+        if row_name == target:
+            return row
+
+    for row in rows:
+        row_name = normalize_text(row.get("name"))
+        if target in row_name or row_name in target:
+            return row
+
+    return rows[0]
+
+
+def route_intent(user_message: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    selected_place = extract_selected_place(context)
+    search_constraints = _extract_search_constraints(user_message, context=context)
+    parsed = search_constraints.get("_parser") or {}
+
+    if is_thanks_only(user_message):
+        return {"intent": "thanks", "lang_needs_llm": True}
+
+    if is_simple_yes(user_message):
+        recent_topic = infer_recent_site_topic(context)
+        if recent_topic:
+            return {"intent": "site_query", "topic": recent_topic}
+
+    if is_acknowledgement(user_message):
+        return {"intent": "ack", "lang_needs_llm": True}
+    if is_goodbye(user_message):
+        return {"intent": "goodbye", "lang_needs_llm": True}
+    if is_how_are_you(user_message):
+        return {"intent": "how_are_you", "lang_needs_llm": True}
+    if is_hungry_message(user_message):
+        return {"intent": "hungry", "lang_needs_llm": True}
+    if is_greeting_only(user_message):
+        return {"intent": "greeting", "lang_needs_llm": True}
+    if is_identity_or_capabilities_question(user_message):
+        return {"intent": "capabilities", "lang_needs_llm": True}
+    if is_dataset_question(user_message):
+        return {"intent": "dataset", "lang_needs_llm": True}
+    if is_page_context_question(user_message):
+        return {"intent": "page_context_query"}
+
+    if is_place_explanation_question(user_message):
+        if selected_place:
+            return {"intent": "place_explanation", "topic": "recommendation"}
+        return {"intent": "site_query", "topic": "recommendation"}
+
+    detail_fields = detect_selected_place_detail_fields(user_message)
+    explicit_name = extract_place_name_from_detail_query(user_message)
+
+    if selected_place and is_place_address_followup(user_message):
+        return {"intent": "place_detail_query", "fields": ["address"]}
+
+    if selected_place and detail_fields and has_explicit_selected_place_reference(user_message):
+        return {"intent": "place_detail_query", "fields": detail_fields}
+
+    if explicit_name and detail_fields:
+        return {"intent": "named_place_detail_query", "fields": detail_fields, "place_name": explicit_name}
+
+    pending_search = get_pending_search(context)
+    if pending_search:
+        merged_pending = merge_pending_search_with_user_reply(user_message, context)
+        if any(merged_pending.get(k) is not None for k in ["place_type", "cuisine", "keyword"]):
+            return {
+                "intent": "places_query",
+                "place_type": merged_pending.get("place_type"),
+                "cuisine": merged_pending.get("cuisine"),
+                "max_distance_km": merged_pending.get("max_distance_km"),
+                "min_rating": merged_pending.get("min_rating"),
+                "keyword": merged_pending.get("keyword"),
+                "parsed": parsed,
+                "from_pending_follow_up": True,
+            }
+
+    if is_search_like_message(user_message) or parsed.get("intent") == "place_search":
+        merged = dict(search_constraints)
+        if is_short_search_followup(user_message, context):
+            merged = merge_followup_places_constraints(user_message, context)
+        return {
+            "intent": "places_query",
+            "place_type": merged.get("place_type"),
+            "cuisine": merged.get("cuisine"),
+            "max_distance_km": merged.get("max_distance_km"),
+            "min_rating": merged.get("min_rating"),
+            "keyword": merged.get("keyword"),
+            "parsed": parsed,
+        }
+
+    if is_out_of_scope_request(user_message) and not is_search_like_message(user_message) and not has_site_signal(user_message):
+        return {"intent": "out_of_scope", "lang_needs_llm": True}
+    if mentions_other_city(user_message) and not has_site_signal(user_message):
+        return {"intent": "ottawa_only", "lang_needs_llm": True}
+
+    if has_site_signal(user_message):
+        return {"intent": "site_query", "topic": infer_site_topic(user_message)}
+
+    if is_short_search_followup(user_message, context):
+        merged = merge_followup_places_constraints(user_message, context)
+        return {
+            "intent": "places_query",
+            "place_type": merged.get("place_type"),
+            "cuisine": merged.get("cuisine"),
+            "max_distance_km": merged.get("max_distance_km"),
+            "min_rating": merged.get("min_rating"),
+            "keyword": merged.get("keyword"),
+            "parsed": parsed,
+        }
+
+    return {"intent": "out_of_scope", "lang_needs_llm": True}
 
 
 def search_places_with_constraints(
@@ -1177,30 +1409,88 @@ def fallback_places_message(places: List[Dict[str, Any]], lang: str) -> str:
     return intro + "\n" + "\n".join(lines)
 
 
-def summarize_places_answer(user_message: str, places: List[Dict[str, Any]], lang: str, context: Optional[Dict[str, Any]] = None) -> str:
+def build_no_results_message(lang: str, filters: Optional[Dict[str, Any]] = None) -> str:
+    filters = filters or {}
+
+    place_type = filters.get("place_type")
+    cuisine = filters.get("cuisine")
+    zone = filters.get("zone") or filters.get("keyword")
+
+    if lang == "en":
+        parts = []
+        if place_type == "restaurant":
+            parts.append("restaurant")
+        elif place_type in {"hotel", "accommodation"}:
+            parts.append("accommodation")
+        else:
+            parts.append("place")
+
+        if cuisine:
+            parts.append(f"with {cuisine} cuisine")
+        if zone:
+            parts.append(f"near {str(zone).replace('_', ' ')}")
+
+        target = " ".join(parts).strip()
+        return (
+            f"I couldn't find an exact match for this {target} in the current CityTaste data. "
+            f"You can try broadening the area or removing one filter."
+        )
+
+    parts = []
+    if place_type == "restaurant":
+        parts.append("restaurant")
+    elif place_type in {"hotel", "accommodation"}:
+        parts.append("hébergement")
+    else:
+        parts.append("lieu")
+
+    if cuisine:
+        parts.append(f"de cuisine {cuisine}")
+    if zone:
+        parts.append(f"près de {str(zone).replace('_', ' ')}")
+
+    target = " ".join(parts).strip()
+    return (
+        f"Je n’ai pas trouvé de correspondance exacte pour ce {target} dans les données actuelles de CityTaste. "
+        f"Tu peux essayer d’élargir la zone ou de retirer un filtre."
+    )
+
+
+def summarize_places_answer(
+    user_message: str,
+    places: List[Dict[str, Any]],
+    lang: str,
+    parsed_filters: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> str:
+    parsed_filters = parsed_filters or {}
     fallback = fallback_places_message(places, lang)
+
     if not places:
-        return fallback
+        return build_no_results_message(lang=lang, filters=parsed_filters)
+
     if not llm_is_available():
         return fallback
 
-    llm = get_llm_service()
     history = "\n".join(get_history_messages(context)[-6:])
-    context_text = format_place_results(places)
-    base_prompt = build_place_response_prompt(question=user_message, context=context_text)
-    prompt = f"{language_instruction(lang)}\n\nRecent conversation:\n{history or '- No recent history'}\n\n{base_prompt}"
+    prompt = build_search_results_prompt(user_message, parsed_filters, places)
+    prompt = f"{prompt}\n\nRecent conversation:\n{history or '- No recent history'}"
+
     system = (
         SYSTEM_PROMPT
         + "\n\n"
         + language_instruction(lang)
         + "\nUse only the provided place information."
         + "\nDo not invent places, ratings, distances, neighborhoods, or addresses."
-        + "\nDo not present the distance as the user's real distance unless that is explicitly confirmed."
-        + "\nIf the user asked for Asian cuisine, only describe a place as Asian if its listed cuisine actually fits that family."
-        + "\nIf the user gave an area or road, mention it cautiously only if it was in the user message, not as a verified distance claim."
+        + "\nDo not explain your internal process."
+        + "\nDo not say: 'voici la réponse finale', 'j'ai cherché', 'je vais chercher', 'consigne finale', or similar meta phrases."
+        + "\nGive only the final user-facing answer."
+        + "\nIf the target language is English, write only in English."
+        + "\nIf the target language is French, write only in French."
     )
+
     try:
-        text = llm.generate(prompt=prompt, system=system, temperature=0.25, max_tokens=220).strip()
+        text = _llm_generate(prompt=prompt, system=system, temperature=0.12, max_tokens=220)
         return text or fallback
     except Exception:
         return fallback
@@ -1291,7 +1581,6 @@ def explain_selected_place(user_message: str, place: Optional[Dict[str, Any]], l
     if not llm_is_available():
         return fallback
 
-    llm = get_llm_service()
     history = "\n".join(get_history_messages(context)[-6:])
     place_context = format_place_results([place])
     filters_block = "\n".join(f"- {k}: {v}" for k, v in filters.items()) if filters else "- No active filters provided"
@@ -1305,7 +1594,8 @@ def explain_selected_place(user_message: str, place: Optional[Dict[str, Any]], l
         + "\nYou explain why a selected place may appear in CityTaste."
         + "\nUse only the provided place data and active filters."
         + "\nDo not invent hidden ranking rules, real-time availability, or personalized distance."
-        + "\nIf distance is mentioned, present it as an indicator or app reference distance unless the prompt explicitly confirms user geolocation."
+        + "\nIf the target language is English, write only in English."
+        + "\nIf the target language is French, write only in French."
     )
     prompt = f"""
 {language_instruction(lang)}
@@ -1326,7 +1616,7 @@ Write a short explanation of why this place may be recommended or shown. Base it
 """.strip()
 
     try:
-        text = llm.generate(prompt=prompt, system=system, temperature=0.2, max_tokens=190).strip()
+        text = _llm_generate(prompt=prompt, system=system, temperature=0.2, max_tokens=190)
         return text or fallback
     except Exception:
         return fallback
@@ -1473,6 +1763,16 @@ def simple_citytaste_assistant(user_message: str, context: Optional[Dict[str, An
             "out_of_scope": ui["out_of_scope"],
             "ottawa_only": ui["ottawa_only"],
         }
+
+        if intent == "out_of_scope" and llm_is_available():
+            try:
+                prompt = build_ood_prompt(user_message=user_message, language=lang)
+                system = SYSTEM_PROMPT + "\n\n" + language_instruction(lang)
+                text = _llm_generate(prompt=prompt, system=system, temperature=0.2, max_tokens=120)
+                return make_response(intent, text or fallback_map[intent], sources=[])
+            except Exception:
+                pass
+
         message = generate_natural_message(intent, user_message, lang, fallback_map[intent], context=context)
         return make_response(intent, message, sources=[])
 
@@ -1497,6 +1797,23 @@ def simple_citytaste_assistant(user_message: str, context: Optional[Dict[str, An
             "place_details",
             message,
             place=format_places_for_ui([selected_place])[0] if selected_place else None,
+        )
+
+    if intent == "named_place_detail_query":
+        place_name = route.get("place_name")
+        raw_place = search_place_by_name(place_name) if isinstance(place_name, str) else None
+        place = format_places_for_ui([raw_place])[0] if raw_place else None
+        message = answer_selected_place_details(
+            user_message=user_message,
+            place=raw_place,
+            lang=lang,
+            context=context,
+        )
+        return make_response(
+            "place_details",
+            message,
+            place=place,
+            searched_name=place_name,
         )
 
     strict_site_faq = get_strict_site_faq_answer(user_message, lang)
@@ -1538,8 +1855,37 @@ def simple_citytaste_assistant(user_message: str, context: Optional[Dict[str, An
                 fallback_used=True,
             )
 
-
     if intent == "places_query":
+        detected_constraints = {
+            "place_type": route.get("place_type"),
+            "cuisine": route.get("cuisine"),
+            "max_distance_km": route.get("max_distance_km"),
+            "min_rating": route.get("min_rating"),
+            "keyword": route.get("keyword"),
+        }
+
+        if not route.get("from_pending_follow_up"):
+            missing_field = detect_missing_search_field(detected_constraints)
+            if missing_field:
+                follow_up_message = build_search_follow_up_message(
+                    lang=lang,
+                    missing_field=missing_field,
+                    constraints=detected_constraints,
+                )
+                return make_response(
+                    "follow_up",
+                    follow_up_message,
+                    follow_up_needed=True,
+                    missing_field=missing_field,
+                    pending_search={
+                        "place_type": route.get("place_type"),
+                        "cuisine": route.get("cuisine"),
+                        "max_distance_km": route.get("max_distance_km"),
+                        "min_rating": route.get("min_rating"),
+                    },
+                )
+
+        parsed = route.get("parsed") or {}
         raw_places = search_places_with_constraints(
             place_type=route.get("place_type"),
             cuisine=route.get("cuisine"),
@@ -1549,7 +1895,26 @@ def simple_citytaste_assistant(user_message: str, context: Optional[Dict[str, An
             limit=5,
         )
         places = format_places_for_ui(raw_places)
-        message = summarize_places_answer(user_message, places, lang, context=context)
+
+        parsed_filters = {
+            "language": lang,
+            "intent": "place_search",
+            "place_type": route.get("place_type"),
+            "cuisine": route.get("cuisine"),
+            "zone": route.get("keyword"),
+            "max_distance_km": route.get("max_distance_km"),
+            "min_rating": route.get("min_rating"),
+            "raw_parser": parsed,
+        }
+
+        message = summarize_places_answer(
+            user_message=user_message,
+            places=places,
+            lang=lang,
+            parsed_filters=parsed_filters,
+            context=context,
+        )
+
         return make_response(
             "places",
             message,

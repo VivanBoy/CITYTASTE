@@ -1,8 +1,26 @@
+from __future__ import annotations
+
 from pathlib import Path
+import re
 import sqlite3
+from typing import Any, Dict, List, Optional
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "data" / "citytaste_ottawa.db"
+
+
+GENERIC_CENTER_TERMS = {
+    "downtown",
+    "centre",
+    "center",
+    "centre ottawa",
+    "center ottawa",
+    "centre-ville",
+    "centreville",
+    "centre ville",
+    "downtown ottawa",
+}
 
 
 def get_connection():
@@ -26,6 +44,102 @@ def row_to_place_dict(row):
     for k, v in d.items():
         d[k] = clean_value(v)
     return d
+
+
+def normalize_text(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    value = str(value).strip().lower()
+    value = re.sub(r"\s+", " ", value)
+    return value
+
+
+def normalize_keyword(value: Optional[str]) -> Optional[str]:
+    value = normalize_text(value)
+    if not value:
+        return None
+
+    replacements = {
+        "st-laurent": "st laurent",
+        "saint-laurent": "saint laurent",
+        "centre-ville": "centre ville",
+        "montreal rd": "montreal road",
+        "montréal rd": "montreal road",
+    }
+    for src, dst in replacements.items():
+        value = value.replace(src, dst)
+
+    value = re.sub(r"\s+", " ", value).strip()
+    return value or None
+
+
+def get_available_cuisines(limit: int = 1000) -> List[str]:
+    sql = """
+    SELECT DISTINCT cuisine
+    FROM places
+    WHERE cuisine IS NOT NULL
+      AND TRIM(cuisine) <> ''
+      AND LOWER(TRIM(cuisine)) NOT IN ('unknown', 'none', 'nan')
+    LIMIT ?
+    """
+
+    cuisines = set()
+
+    with get_connection() as conn:
+        rows = conn.execute(sql, [limit]).fetchall()
+
+    for row in rows:
+        raw = clean_value(row["cuisine"])
+        if not raw:
+            continue
+
+        parts = re.split(r"[,;/|]", str(raw))
+        for part in parts:
+            item = normalize_text(part)
+            if item and item not in {"unknown", "none", "nan"}:
+                cuisines.add(item)
+
+    return sorted(cuisines)
+
+
+def get_available_zones(limit: int = 1000) -> List[str]:
+    zones = {
+        "downtown",
+        "centre ville",
+        "st laurent",
+        "kanata",
+        "orleans",
+        "nepean",
+        "glebe",
+        "westboro",
+        "barrhaven",
+        "bank street",
+        "montreal road",
+        "byward market",
+        "sandy hill",
+    }
+
+    sql = """
+    SELECT DISTINCT address, addr_city
+    FROM places
+    WHERE COALESCE(TRIM(name), '') <> ''
+    LIMIT ?
+    """
+
+    with get_connection() as conn:
+        rows = conn.execute(sql, [limit]).fetchall()
+
+    for row in rows:
+        for key in ["address", "addr_city"]:
+            raw = clean_value(row[key])
+            if not raw:
+                continue
+            value = normalize_text(raw)
+            if value and value not in {"ottawa", "ontario", "canada"}:
+                if len(value) <= 40:
+                    zones.add(value)
+
+    return sorted(zones)
 
 
 def search_places(
@@ -64,22 +178,26 @@ def search_places(
 
     params = []
 
-    if place_type == "restaurant":
+    normalized_place_type = normalize_text(place_type)
+    normalized_cuisine = normalize_text(cuisine)
+    kw_clean = normalize_keyword(keyword)
+
+    if normalized_place_type in {"restaurant"}:
         sql += """
         AND LOWER(COALESCE(place_type, '')) = 'restaurant'
         """
 
-    elif place_type == "hotel":
+    elif normalized_place_type in {"hotel", "accommodation", "hebergement", "hébergement"}:
         sql += """
         AND LOWER(COALESCE(place_type, '')) IN ('hotel', 'guest_house', 'motel', 'hostel')
         """
 
-    if cuisine:
+    if normalized_cuisine:
         sql += """
         AND COALESCE(LOWER(cuisine), '') NOT IN ('', 'unknown', 'none')
         AND LOWER(COALESCE(cuisine, '')) LIKE LOWER(?)
         """
-        params.append(f"%{cuisine}%")
+        params.append(f"%{normalized_cuisine}%")
 
     if max_distance_km is not None:
         sql += """
@@ -95,36 +213,23 @@ def search_places(
         """
         params.append(min_rating)
 
-    if keyword:
-        kw_clean = keyword.lower().strip()
-
-        generic_center_terms = {
-            "downtown",
-            "centre",
-            "center",
-            "centre ottawa",
-            "center ottawa",
-            "centre-ville",
-            "centreville",
-            "centre ville",
-            "downtown ottawa"
-    }
-
-    # Si le mot-clé désigne simplement le centre,
-    # on laisse dist_to_center_km faire le travail.
-    if kw_clean not in generic_center_terms:
-        sql += """
-        AND (
-            LOWER(COALESCE(name, '')) LIKE LOWER(?)
-            OR LOWER(COALESCE(cuisine, '')) LIKE LOWER(?)
-            OR LOWER(COALESCE(address, '')) LIKE LOWER(?)
-            OR LOWER(COALESCE(text, '')) LIKE LOWER(?)
-            OR LOWER(COALESCE(amenity, '')) LIKE LOWER(?)
-            OR LOWER(COALESCE(tourism, '')) LIKE LOWER(?)
-        )
-        """
-        kw = f"%{kw_clean}%"
-        params.extend([kw, kw, kw, kw, kw, kw])
+    if kw_clean:
+        # Si le mot-clé désigne seulement le centre-ville,
+        # on laisse surtout dist_to_center_km faire le travail.
+        if kw_clean not in GENERIC_CENTER_TERMS:
+            sql += """
+            AND (
+                LOWER(COALESCE(name, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(cuisine, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(address, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(addr_city, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(text, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(amenity, '')) LIKE LOWER(?)
+                OR LOWER(COALESCE(tourism, '')) LIKE LOWER(?)
+            )
+            """
+            kw = f"%{kw_clean}%"
+            params.extend([kw, kw, kw, kw, kw, kw, kw])
 
     if max_distance_km is not None:
         sql += """

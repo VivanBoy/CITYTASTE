@@ -1,0 +1,69 @@
+model,id,question,expected_lang,answer,latency_sec,keyword_score,lang_ok,proto_ok,speed_score,auto_score_100,manual_score_5,notes
+qwen3_4b,1,Trouve-moi un restaurant italien proche du centre-ville d’Ottawa.,fr,"Voici quelques options :
+1. Paninaro — sandwich;italian — 82 O'Connor Street
+2. Tosca — italian — 144 O'Connor Street
+3. North & Navy — italian — 4.6/5 — 226 Nepean Street",147.82574339999883,0.25,1.0,1.0,0.0,58.75,,
+qwen3_4b,2,Je cherche un restaurant chinois près de St-Laurent.,fr,Je n’ai pas trouvé de correspondance exacte pour ce restaurant de cuisine chinese près de st laurent dans les données actuelles de CityTaste. Tu peux essayer d’élargir la zone ou de retirer un filtre.,2.3860310000000027,0.6,1.0,1.0,0.7613968999999997,82.4209535,,
+qwen3_4b,3,Je veux un hôtel près du centre-ville.,fr,"Voici quelques options :
+1. Sheraton Ottawa Hotel — 4.3/5 — 150 Albert Street
+2. reStays — 101 Queen Street
+3. Capital Hill Hotel & Suites — 88 Albert Street",119.08214299999963,0.5,0.0,1.0,0.0,42.5,,
+qwen3_4b,4,Find an Italian restaurant near downtown Ottawa.,en,"Here are a few options:
+1. Paninaro — sandwich;italian — 82 O'Connor Street
+2. Tosca — italian — 144 O'Connor Street
+3. North & Navy — italian — 4.6/5 — 226 Nepean Street",128.1566045999989,0.25,0.0,1.0,0.0,33.75,,
+qwen3_4b,5,Find a hotel near downtown.,en,"Here are a few options:
+1. Sheraton Ottawa Hotel — 4.3/5 — 150 Albert Street
+2. reStays — 101 Queen Street
+3. Capital Hill Hotel & Suites — 88 Albert Street",139.94912870000007,0.5,1.0,1.0,0.0,67.5,,
+qwen3_4b,6,How do I use filters in CityTaste?,en,"Selon les données disponibles, CityTaste peut s’appuyer sur des critères comme :
+- le type de lieu
+- la cuisine
+- la distance
+- la note
+- certaines informations pratiques comme l’accessibilité ou la disponibilité de détails
+Pour un restaurant, l’utilisateur peut par exemple chercher :
+- un restaurant italien
+- une cuisine africaine
+- un lieu bien noté
+- un lieu proche du centre
+Pour un hébergement, l’utilisateur peut plutôt chercher :
+- un hôtel
+- un motel
+- une auberge
+- un lieu bien situé
+- une option avec de bonnes évaluations lorsqu’elles sont disponibles",9.200002300000051,0.5,0.0,1.0,0.07999976999999492,43.69999654999992,,
+qwen3_4b,7,Comment utiliser les filtres dans CityTaste ?,fr,"Selon les données disponibles, CityTaste peut s’appuyer sur des critères comme :
+- le type de lieu
+- la cuisine
+- la distance
+- la note
+- certaines informations pratiques comme l’accessibilité ou la disponibilité de détails
+Pour un restaurant, l’utilisateur peut par exemple chercher :
+- un restaurant italien
+- une cuisine africaine
+- un lieu bien noté
+- un lieu proche du centre
+Pour un hébergement, l’utilisateur peut plutôt chercher :
+- un hôtel
+- un motel
+- une auberge
+- un lieu bien situé
+- une option avec de bonnes évaluations lorsqu’elles sont disponibles",2.3312980999999127,0.5,1.0,1.0,0.7668701900000088,79.00305285000013,,
+qwen3_4b,8,CityTaste permet-il de faire une réservation ?,fr,"Non. CityTaste n’effectue pas de réservation à la place de l’utilisateur.
+Le site sert à :
+- découvrir des lieux
+- consulter certaines informations utiles
+- comparer plusieurs options
+- accéder, lorsque disponible, au site web du lieu ou à ses informations principales
+Si l’utilisateur souhaite réserver, il doit généralement passer par le site officiel du lieu ou par un service externe.",2.2781957000006514,0.75,1.0,1.0,0.7721804299999349,87.83270644999902,,
+qwen3_4b,9,How are the results ranked?,en,"Les résultats sont généralement ordonnés selon une logique de pertinence. Cette logique peut tenir compte de plusieurs éléments comme :
+- le type de lieu demandé
+- la cuisine recherchée
+- la distance
+- la note
+- la qualité ou la complétude des informations disponibles
+L’objectif est de mettre en avant des options plausibles et utiles, pas simplement d’afficher une liste brute.",2.2325282000001607,0.25,0.0,1.0,0.7767471799999839,45.40120769999976,,
+qwen3_4b,10,Comment activer ma position ?,fr,"Pour activer ta position, utilise l’option de localisation affichée par l’interface si elle est disponible. Ton navigateur devrait alors demander l’autorisation. Si tu acceptes, CityTaste pourra mieux interpréter les demandes de proximité. Si tu refuses, le site peut quand même fonctionner avec une référence de distance plus générale.",2.1665319000003365,1.0,1.0,1.0,0.7833468099999663,96.7502021499995,,
+qwen3_4b,11,Why is this place recommended?,en,"Paninaro may be recommended because it is a restaurant; its cuisine is listed as italian; it has a rating of 4.6/5; it has a distance indicator of about 0.14 km from the app reference point. Recommendations remain a helpful suggestion, not a real-time guarantee.",64.34396089999973,1.0,1.0,1.0,0.0,85.0,,
+qwen3_4b,12,Quelle est l’adresse de ce lieu ?,fr,"Adresse : Rideau Street, Ottawa",2.381158099999084,1.0,1.0,1.0,0.7618841900000917,96.42826285000137,,
