@@ -3092,7 +3092,7 @@ btnUseMyLocation?.addEventListener("click", async () => {
    CITYTASTE CHATBOT
 ========================= */
 
-const CHATBOT_API_URL = "/api/chat";
+const CHATBOT_API_URL = "http://127.0.0.1:8000/api/chat";
 
 const chatbotToggle = el("chatbotToggle");
 const chatbotPanel = el("chatbotPanel");
